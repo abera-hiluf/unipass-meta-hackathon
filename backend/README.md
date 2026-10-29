@@ -37,6 +37,15 @@ The API is available at `http://127.0.0.1:8000`. Swagger UI is available at `htt
 - `POST /api/v1/auth/login` — Authenticate credentials with Argon2 and receive a scoped JWT access token.
 - `GET /api/v1/auth/me` — Retrieve the authenticated account profile (requires `Authorization: Bearer <token>`).
 
+## Institutions and email verification
+
+- `GET /api/v1/institutions` — List active institutions.
+- `POST /api/v1/institutions/{institution_id}/email-verification` — Request verification for an authenticated user's institutional email.
+- `POST /api/v1/institutions/email-verification/confirm` — Confirm a single-use verification token.
+- `GET /api/v1/institutions/me` — View the authenticated user's own institution affiliations.
+
+The Anna University, BIT Campus, Tiruchirappalli entry is marked development-only and has no trusted email domain configured. Email verification does not confirm enrollment or grant campus-service access. No email provider is configured by default; set up a real provider before enabling delivery in a non-test environment.
+
 > **Important**: Account registration and login verify credentials only. They do not constitute identity verification or proof of university enrollment.
 
 ## Run tests
@@ -52,6 +61,7 @@ Database migrations are managed via Alembic:
 - `0001_initial_models`: Initial users, student profiles, identity verifications, and audit logs tables.
 - `0002_centralized_identity`: Verified attributes (`date_of_birth`, document type, HMAC fingerprint, status lifecycle).
 - `0003_add_user_hashed_password`: Added `hashed_password` column to `users`.
+- `0004_institution_email_verification`: Adds development-only institution configuration, user affiliations, and hashed email-verification challenges.
 
 To inspect migration status:
 

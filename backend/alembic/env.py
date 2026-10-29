@@ -4,6 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.db import Base, DATABASE_URL
+from app import models  # noqa: F401 - load all model metadata for Alembic
 from app import models  # noqa: F401 - imports all model metadata for Alembic
 
 

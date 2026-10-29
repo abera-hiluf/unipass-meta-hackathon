@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     jwt_secret_key: SecretStr
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+    email_provider: str = "none"
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",

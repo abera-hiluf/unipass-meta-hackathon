@@ -25,6 +25,10 @@ def test_metadata_contains_expected_tables_and_relationship_constraints() -> Non
         "student_profiles",
         "identity_verifications",
         "audit_logs",
+        "institutions",
+        "institution_email_domains",
+        "institution_affiliations",
+        "email_verification_challenges",
     }
     assert User.__table__.c.id.type.as_uuid is True
     assert StudentProfile.__table__.c.user_id.foreign_keys

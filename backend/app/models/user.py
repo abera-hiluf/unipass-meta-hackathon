@@ -13,6 +13,7 @@ from app.db import Base
 if TYPE_CHECKING:
     from app.models.audit_log import AuditLog
     from app.models.identity_verification import IdentityVerification
+    from app.models.institution_affiliation import InstitutionAffiliation
     from app.models.student_profile import StudentProfile
 
 
@@ -47,6 +48,7 @@ class User(Base):
         back_populates="reviewer", foreign_keys="IdentityVerification.reviewed_by"
     )
     audit_logs: Mapped[list[AuditLog]] = relationship(back_populates="actor")
+    institution_affiliations: Mapped[list[InstitutionAffiliation]] = relationship(back_populates="user")
 
     @validates("email")
     def validate_email(self, _key: str, email: str) -> str:
