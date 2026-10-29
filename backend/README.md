@@ -21,6 +21,8 @@ python -m pip install -r requirements.txt
 
 ## Run the API
 
+Before starting the API, set `JWT_SECRET_KEY` in `backend/.env` to a long random value. The signing secret is required at runtime and is never returned by the API. `JWT_ALGORITHM` and `ACCESS_TOKEN_EXPIRE_MINUTES` may also be configured there; `.env.example` contains placeholders only.
+
 ```powershell
 uvicorn app.main:app --reload
 ```
@@ -28,6 +30,14 @@ uvicorn app.main:app --reload
 The API is available at `http://127.0.0.1:8000`. Swagger UI is available at `http://127.0.0.1:8000/docs`.
 
 `GET /api/v1/db-health` runs `SELECT 1` through the configured Supabase Session Pooler connection. It returns `200` when PostgreSQL is reachable and a safe `503` response when it is unavailable. The root `/health` endpoint does not depend on PostgreSQL.
+
+## Authentication Endpoints
+
+- `POST /api/v1/auth/register` — Register a student or admin user account (uses Argon2 password hashing). Returns account metadata without credentials.
+- `POST /api/v1/auth/login` — Authenticate credentials with Argon2 and receive a scoped JWT access token.
+- `GET /api/v1/auth/me` — Retrieve the authenticated account profile (requires `Authorization: Bearer <token>`).
+
+> **Important**: Account registration and login verify credentials only. They do not constitute identity verification or proof of university enrollment.
 
 ## Run tests
 
@@ -37,13 +47,20 @@ pytest
 
 ## Database migrations
 
-Keep the real `DATABASE_URL` in `backend/.env`; it is ignored by Git. The Alembic configuration reads it at runtime and does not store it in `alembic.ini`:
+Database migrations are managed via Alembic:
+
+- `0001_initial_models`: Initial users, student profiles, identity verifications, and audit logs tables.
+- `0002_centralized_identity`: Verified attributes (`date_of_birth`, document type, HMAC fingerprint, status lifecycle).
+- `0003_add_user_hashed_password`: Added `hashed_password` column to `users`.
+
+To inspect migration status:
 
 ```powershell
-cd backend
-alembic upgrade head
+alembic current
 ```
 
-No domain tables or migrations are defined yet.
+To apply pending migrations (requires explicit approval before running on live Supabase):
 
-The current health checks do not require PostgreSQL. Database integration, authentication, and the official Meta Model API provider will be added in later stages. Meta models remain the planned provider for AgentX; no live Meta API calls are made by this foundation.
+```powershell
+alembic upgrade head
+```

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +22,11 @@ class Settings(BaseSettings):
 
     # Keyed HMAC secret for document identifier hashing (kept outside database)
     document_hmac_secret: str = "dev-unipass-hmac-secret-change-in-prod"
+
+    # JWT Authentication configuration
+    jwt_secret_key: SecretStr
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
