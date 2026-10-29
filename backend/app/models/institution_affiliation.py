@@ -25,6 +25,15 @@ AFFILIATION_STATUSES = (
     "enrollment_revoked",
 )
 
+VALID_AFFILIATION_TRANSITIONS = {
+    "email_not_verified": {"email_verified"},
+    "email_verified": {"enrollment_pending"},
+    "enrollment_pending": {"enrollment_confirmed", "enrollment_rejected"},
+    "enrollment_confirmed": {"enrollment_revoked"},
+    "enrollment_rejected": {"enrollment_pending"},
+    "enrollment_revoked": {"enrollment_pending"},
+}
+
 
 class InstitutionAffiliation(Base):
     __tablename__ = "institution_affiliations"
@@ -48,6 +57,9 @@ class InstitutionAffiliation(Base):
     institutional_email: Mapped[str] = mapped_column(String(320), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="email_not_verified")
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    eligibility_source: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    eligibility_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    eligibility_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
@@ -58,3 +70,12 @@ class InstitutionAffiliation(Base):
     verification_challenges: Mapped[list[EmailVerificationChallenge]] = relationship(
         back_populates="affiliation", cascade="all, delete-orphan"
     )
+
+    def transition_to(self, new_status: str) -> None:
+        if new_status not in AFFILIATION_STATUSES:
+            raise ValueError("Unsupported affiliation status")
+        if new_status == self.status:
+            return
+        if new_status not in VALID_AFFILIATION_TRANSITIONS.get(self.status, set()):
+            raise ValueError(f"Invalid affiliation transition: {self.status} -> {new_status}")
+        self.status = new_status

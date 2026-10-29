@@ -14,6 +14,8 @@ from app.main import app
 from app.models.email_verification import EmailVerificationChallenge
 from app.models.institution import Institution, InstitutionEmailDomain
 from app.models.institution_affiliation import InstitutionAffiliation
+from app.models.user import User
+from app.services.eligibility import MockEligibilityAdapter, get_eligibility_adapter
 from app.services.institutions import hash_verification_token
 
 
@@ -211,3 +213,131 @@ def test_my_affiliations_are_owned_by_authenticated_user(institution_test_contex
     assert affiliations.status_code == status.HTTP_200_OK
     assert affiliations.json()[0]["institutional_email"] == "affiliation@students.test.edu"
     assert sender.messages[-1]["token"] not in affiliations.text
+
+
+def verify_email_for_user(client, SessionLocal, sender, institution_id, email: str) -> tuple[str, uuid.UUID]:
+    token = register_and_login(client, email)
+    issue = client.post(
+        f"/api/v1/institutions/{institution_id}/email-verification",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"institutional_email": f"{email.split('@')[0]}@students.test.edu"},
+    )
+    assert issue.status_code == status.HTTP_202_ACCEPTED
+    raw_token = sender.messages[-1]["token"]
+    confirm = client.post(
+        "/api/v1/institutions/email-verification/confirm",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"token": raw_token},
+    )
+    assert confirm.status_code == status.HTTP_200_OK
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email).one()
+        affiliation = db.query(InstitutionAffiliation).filter(InstitutionAffiliation.user_id == user.id).one()
+        return token, affiliation.id
+
+
+def test_unverified_email_cannot_request_eligibility(institution_test_context) -> None:
+    client, SessionLocal, _, institution_id, _ = institution_test_context
+    token = register_and_login(client, "not-verified@example.com")
+    # Create an affiliation without completing the email flow, as a DB-backed
+    # setup equivalent to an issued but unconfirmed verification challenge.
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == "not-verified@example.com").one()
+        affiliation = InstitutionAffiliation(
+            user_id=user.id,
+            institution_id=institution_id,
+            institutional_email="not-verified@students.test.edu",
+        )
+        db.add(affiliation)
+        db.commit()
+        affiliation_id = affiliation.id
+
+    response = client.post(
+        f"/api/v1/affiliations/{affiliation_id}/verify-eligibility",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"student_identifier": "SYN-001"},
+    )
+    assert response.status_code == status.HTTP_409_CONFLICT
+
+
+def test_matching_synthetic_record_confirms_enrollment(institution_test_context) -> None:
+    client, SessionLocal, sender, institution_id, _ = institution_test_context
+    token, affiliation_id = verify_email_for_user(
+        client, SessionLocal, sender, institution_id, "match@example.com"
+    )
+    app.dependency_overrides[get_eligibility_adapter] = lambda: MockEligibilityAdapter(
+        {("verified-test-university", "SYN-001")}
+    )
+    response = client.post(
+        f"/api/v1/affiliations/{affiliation_id}/verify-eligibility",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"student_identifier": "SYN-001"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["status"] == "enrollment_confirmed"
+    assert response.json()["source"] == "mock_development"
+
+
+def test_nonmatching_synthetic_record_is_rejected(institution_test_context) -> None:
+    client, SessionLocal, sender, institution_id, _ = institution_test_context
+    token, affiliation_id = verify_email_for_user(
+        client, SessionLocal, sender, institution_id, "nonmatch@example.com"
+    )
+    app.dependency_overrides[get_eligibility_adapter] = lambda: MockEligibilityAdapter(set())
+    response = client.post(
+        f"/api/v1/affiliations/{affiliation_id}/verify-eligibility",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"student_identifier": "SYN-NOT-IN-ROSTER"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["status"] == "enrollment_rejected"
+    assert response.json()["reason_code"] == "synthetic_record_not_found"
+
+
+def test_unavailable_adapter_leaves_enrollment_pending(institution_test_context) -> None:
+    client, SessionLocal, sender, institution_id, _ = institution_test_context
+    token, affiliation_id = verify_email_for_user(
+        client, SessionLocal, sender, institution_id, "pending@example.com"
+    )
+    # The default adapter is explicitly unavailable; it must not approve.
+    response = client.post(
+        f"/api/v1/affiliations/{affiliation_id}/verify-eligibility",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"student_identifier": "SYN-UNKNOWN"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["status"] == "enrollment_pending"
+    assert response.json()["reason_code"] == "source_unavailable"
+
+
+def test_inactive_institution_and_wrong_owner_are_rejected(institution_test_context) -> None:
+    client, SessionLocal, sender, institution_id, _ = institution_test_context
+    owner_token, affiliation_id = verify_email_for_user(
+        client, SessionLocal, sender, institution_id, "owner-eligibility@example.com"
+    )
+    other_token = register_and_login(client, "other-eligibility@example.com")
+
+    wrong_owner = client.post(
+        f"/api/v1/affiliations/{affiliation_id}/verify-eligibility",
+        headers={"Authorization": f"Bearer {other_token}"},
+        json={"student_identifier": "SYN-001"},
+    )
+    assert wrong_owner.status_code == status.HTTP_404_NOT_FOUND
+
+    with SessionLocal() as db:
+        institution = db.get(Institution, institution_id)
+        institution.is_active = False
+        db.commit()
+
+    inactive = client.post(
+        f"/api/v1/affiliations/{affiliation_id}/verify-eligibility",
+        headers={"Authorization": f"Bearer {owner_token}"},
+        json={"student_identifier": "SYN-001"},
+    )
+    assert inactive.status_code == status.HTTP_409_CONFLICT
+
+
+def test_invalid_enrollment_transition_is_rejected() -> None:
+    affiliation = InstitutionAffiliation(status="email_verified")
+    with pytest.raises(ValueError):
+        affiliation.transition_to("enrollment_confirmed")

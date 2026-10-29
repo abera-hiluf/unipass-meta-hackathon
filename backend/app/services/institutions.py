@@ -184,6 +184,7 @@ def confirm_email_verification(db: Session, user: User, token: str) -> None:
 
     challenge.consumed_at = now
     affiliation = challenge.affiliation
-    affiliation.status = "email_verified"
+    if affiliation.status == "email_not_verified":
+        affiliation.transition_to("email_verified")
     affiliation.email_verified_at = now
     db.commit()

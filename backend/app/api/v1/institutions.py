@@ -80,6 +80,9 @@ def get_my_affiliations(
             institutional_email=affiliation.institutional_email,
             status=affiliation.status,
             email_verified_at=affiliation.email_verified_at,
+            eligibility_source=affiliation.eligibility_source,
+            eligibility_checked_at=affiliation.eligibility_checked_at,
+            eligibility_reason_code=affiliation.eligibility_reason_code,
         )
         for affiliation in affiliations
     ]

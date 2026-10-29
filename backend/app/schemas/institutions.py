@@ -44,3 +44,6 @@ class AffiliationResponse(BaseModel):
     institutional_email: EmailStr
     status: str
     email_verified_at: datetime | None
+    eligibility_source: str | None
+    eligibility_checked_at: datetime | None
+    eligibility_reason_code: str | None
