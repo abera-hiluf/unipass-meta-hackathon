@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
     email_provider: str = "none"
+    document_storage_provider: str = "local"
+    document_storage_path: str = str(BACKEND_DIR / ".local_storage")
+    document_max_upload_bytes: int = 5 * 1024 * 1024
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
