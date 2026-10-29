@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     meta_api_key: str | None = None
     meta_model: str | None = None
 
+    # Keyed HMAC secret for document identifier hashing (kept outside database)
+    document_hmac_secret: str = "dev-unipass-hmac-secret-change-in-prod"
+
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8",

@@ -5,23 +5,22 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.types import Uuid
 
 from app.db import Base
+from app.models.enums import VERIFICATION_STATUSES, VerificationStatus
 
 if TYPE_CHECKING:
     from app.models.user import User
-
-
-VERIFICATION_STATUSES = ("pending", "approved", "rejected")
 
 
 class IdentityVerification(Base):
     __tablename__ = "identity_verifications"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'approved', 'rejected')", name="ck_identity_verifications_status"
+            f"status IN {VERIFICATION_STATUSES}",
+            name="ck_identity_verifications_status",
         ),
     )
 
@@ -29,7 +28,17 @@ class IdentityVerification(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=VerificationStatus.PENDING.value,
+        server_default=VerificationStatus.PENDING.value,
+    )
+    document_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    document_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    review_notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -41,3 +50,13 @@ class IdentityVerification(Base):
 
     user: Mapped[User] = relationship(back_populates="verification_attempts", foreign_keys=[user_id])
     reviewer: Mapped[User | None] = relationship(back_populates="reviewed_verifications", foreign_keys=[reviewed_by])
+
+    @property
+    def submitted_at(self) -> datetime:
+        return self.created_at
+
+    @validates("status")
+    def validate_status(self, _key: str, status: str | VerificationStatus) -> str:
+        if isinstance(status, VerificationStatus):
+            return status.value
+        return status.strip().upper()

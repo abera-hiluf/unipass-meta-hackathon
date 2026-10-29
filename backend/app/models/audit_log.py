@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -24,6 +24,7 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(128), nullable=False)
     resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     actor: Mapped[User | None] = relationship(back_populates="audit_logs")
