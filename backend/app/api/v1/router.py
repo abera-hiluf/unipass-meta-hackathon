@@ -1,7 +1,10 @@
 from fastapi import APIRouter
 
+from app.api.v1.db_health import router as db_health_router
+
 
 router = APIRouter()
+router.include_router(db_health_router)
 
 
 @router.get("/health")
