@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UniPass selfie capture</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; }
+    body { max-width: 42rem; margin: 2rem auto; padding: 0 1rem; color: #172033; }
+    label { display: block; margin: 1rem 0 .35rem; font-weight: 600; }
+    input { box-sizing: border-box; width: 100%; padding: .65rem; }
+    button { margin: .5rem .5rem .5rem 0; padding: .65rem 1rem; cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .5; }
+    video, img { display: block; width: 100%; max-height: 28rem; object-fit: contain; background: #101827; border-radius: .5rem; }
+    .notice { padding: .8rem; background: #eef4ff; border-radius: .5rem; }
+    #message { min-height: 1.5rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Secure selfie capture</h1>
+  <p class="notice">This selfie is collected only for later liveness and face-comparison review. Capturing or submitting it does not prove identity or approve your verification.</p>
+
+  <label for="token">Access token</label>
+  <input id="token" type="password" autocomplete="off" placeholder="Paste your bearer token">
+  <label for="verificationId">Verification ID</label>
+  <input id="verificationId" autocomplete="off" placeholder="Verification request UUID">
+
+  <label><input id="consent" type="checkbox" style="width:auto"> I consent to capture and submit one selfie for this verification request.</label>
+  <p>Use even lighting, face the camera directly, remove anything covering your face, and keep your face inside the preview.</p>
+
+  <video id="preview" autoplay muted playsinline hidden></video>
+  <img id="captured" alt="Captured selfie preview" hidden>
+  <canvas id="canvas" hidden></canvas>
+  <div>
+    <button id="start" type="button" disabled>Start camera</button>
+    <button id="capture" type="button" disabled>Capture</button>
+    <button id="retake" type="button" hidden>Retake</button>
+    <button id="submit" type="button" hidden disabled>Confirm and submit selfie</button>
+  </div>
+  <p id="message" role="status" aria-live="polite"></p>
+
+  <script>
+    (() => {
+      const token = document.querySelector('#token');
+      const verificationId = document.querySelector('#verificationId');
+      const consent = document.querySelector('#consent');
+      const preview = document.querySelector('#preview');
+      const captured = document.querySelector('#captured');
+      const canvas = document.querySelector('#canvas');
+      const start = document.querySelector('#start');
+      const capture = document.querySelector('#capture');
+      const retake = document.querySelector('#retake');
+      const submit = document.querySelector('#submit');
+      const message = document.querySelector('#message');
+      let stream = null;
+      let selfieBlob = null;
+
+      const say = (text) => { message.textContent = text; };
+      const stopCamera = () => {
+        if (stream) stream.getTracks().forEach((track) => track.stop());
+        stream = null;
+        preview.srcObject = null;
+        capture.disabled = true;
+      };
+
+      consent.addEventListener('change', () => { start.disabled = !consent.checked; });
+      start.addEventListener('click', async () => {
+        if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+          say('Camera capture requires HTTPS or trusted localhost in a supported browser.');
+          return;
+        }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+          preview.srcObject = stream;
+          preview.hidden = false;
+          captured.hidden = true;
+          capture.disabled = false;
+          say('Camera ready. Position your face in the preview.');
+        } catch (error) {
+          say(error?.name === 'NotAllowedError' ? 'Camera permission was denied.' : 'No usable camera is available.');
+          stopCamera();
+        }
+      });
+
+      capture.addEventListener('click', () => {
+        if (!stream || !consent.checked) return;
+        canvas.width = preview.videoWidth;
+        canvas.height = preview.videoHeight;
+        canvas.getContext('2d').drawImage(preview, 0, 0);
+        canvas.toBlob((blob) => {
+          if (!blob) { say('The capture could not be prepared. Please retake it.'); return; }
+          selfieBlob = blob;
+          captured.src = URL.createObjectURL(blob);
+          captured.hidden = false;
+          preview.hidden = true;
+          retake.hidden = false;
+          submit.hidden = false;
+          submit.disabled = false;
+          stopCamera();
+          say('Review the preview. Nothing has been uploaded yet.');
+        }, 'image/jpeg', .9);
+      });
+
+      retake.addEventListener('click', () => {
+        selfieBlob = null;
+        captured.hidden = true;
+        retake.hidden = true;
+        submit.hidden = true;
+        start.disabled = !consent.checked;
+        say('Ready for another capture.');
+      });
+
+      submit.addEventListener('click', async () => {
+        if (!selfieBlob || !consent.checked || !token.value || !verificationId.value) {
+          say('Provide the access token and verification ID, give consent, and capture a selfie first.');
+          return;
+        }
+        const form = new FormData();
+        form.append('consent', 'true');
+        form.append('capture_state', 'captured');
+        form.append('file', selfieBlob, 'selfie.jpg');
+        submit.disabled = true;
+        try {
+          const response = await fetch(`/api/v1/identity/verifications/${encodeURIComponent(verificationId.value)}/selfie`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token.value}` },
+            body: form,
+          });
+          if (!response.ok) throw new Error('Selfie submission was rejected.');
+          say('Selfie submitted for later review. No liveness or face match has been performed.');
+        } catch (error) {
+          submit.disabled = false;
+          say(error.message || 'Selfie submission failed.');
+        }
+      });
+
+      window.addEventListener('beforeunload', stopCamera);
+    })();
+  </script>
+</body>
+</html>
