@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.models.identity_verification import IdentityVerification
 from app.models.user import User
 from app.services.storage import PrivateObjectStorage, StorageError
+from app.services.document_validation import validate_document_content
 
 
 SUPPORTED_DOCUMENT_TYPES = {"passport", "national_id"}
@@ -46,9 +47,14 @@ async def _read_and_validate_upload(upload: UploadFile, document_type: str) -> t
 
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Document file is empty")
-    if not rule["signature"](bytes(content)):
+    raw_content = bytes(content)
+    if not rule["signature"](raw_content):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Document content is invalid")
-    return bytes(content), extension
+    try:
+        validate_document_content(raw_content, extension)
+    except StorageError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Document content is unreadable") from None
+    return raw_content, extension
 
 
 async def create_identity_verification(

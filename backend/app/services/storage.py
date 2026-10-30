@@ -5,6 +5,8 @@ import os
 import tempfile
 from typing import Protocol
 
+from fastapi import HTTPException, status
+
 from app.core.config import settings
 
 
@@ -14,6 +16,8 @@ class StorageError(RuntimeError):
 
 class PrivateObjectStorage(Protocol):
     def put_object(self, object_key: str, content: bytes, content_type: str) -> None: ...
+
+    def get_object(self, object_key: str) -> bytes: ...
 
     def delete_object(self, object_key: str) -> None: ...
 
@@ -47,6 +51,13 @@ class LocalPrivateObjectStorage:
                     pass
             raise StorageError("Private object storage failed") from exc
 
+    def get_object(self, object_key: str) -> bytes:
+        target = self._safe_path(object_key)
+        try:
+            return target.read_bytes()
+        except OSError as exc:
+            raise StorageError("Private object retrieval failed") from exc
+
     def delete_object(self, object_key: str) -> None:
         target = self._safe_path(object_key)
         try:
@@ -58,4 +69,7 @@ class LocalPrivateObjectStorage:
 def get_storage() -> PrivateObjectStorage:
     if settings.document_storage_provider.lower() == "local":
         return LocalPrivateObjectStorage(settings.document_storage_path)
-    raise StorageError("Document storage provider is not configured")
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Document storage is unavailable",
+    )

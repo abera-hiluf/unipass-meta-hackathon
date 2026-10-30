@@ -1,0 +1,89 @@
+import json
+
+import httpx
+import pytest
+
+from app.core.config import Settings
+from app.services.analysis import MetaDocumentAnalysisAdapter
+from app.services.meta_api import MetaAPIError, MetaModelClient
+
+
+class FakeRequester:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        self.calls: list[dict] = []
+
+    def post(self, url: str, *, headers: dict[str, str], json: dict) -> httpx.Response:
+        self.calls.append({"url": url, "headers": headers, "json": json})
+        return httpx.Response(200, json=self.payload)
+
+
+def _settings() -> Settings:
+    return Settings(
+        _env_file=None,
+        JWT_SECRET_KEY="unit-test-only-jwt-secret-with-32-plus-bytes",
+        META_API_KEY="synthetic-test-key",
+        META_API_BASE_URL="https://api.meta.ai/v1",
+        META_SAM_MODEL="sam-3.1",
+        META_VISION_MODEL="muse-spark-1.3",
+    )
+
+
+def test_meta_client_uses_responses_api_and_validates_structured_output() -> None:
+    requester = FakeRequester(
+        {
+            "output_text": json.dumps(
+                {
+                    "full_name": "Synthetic Student",
+                    "date_of_birth": "2000-01-02",
+                    "document_type": "passport",
+                    "expiration_date": None,
+                    "issuing_country": "IN",
+                    "document_number": "SYNTHETIC-123",
+                    "confidence": 0.91,
+                }
+            )
+        }
+    )
+    client = MetaModelClient(_settings(), requester=requester)
+
+    fields = client.extract_document_fields(b"\xff\xd8\xffsynthetic", "image/jpeg", "passport")
+
+    assert fields.full_name == "Synthetic Student"
+    assert requester.calls[0]["url"] == "https://api.meta.ai/v1/responses"
+    assert requester.calls[0]["headers"]["Authorization"] == "Bearer synthetic-test-key"
+    assert requester.calls[0]["json"]["model"] == "muse-spark-1.3"
+    assert requester.calls[0]["json"]["text"]["format"]["type"] == "json_schema"
+
+
+def test_meta_client_rejects_invalid_model_output() -> None:
+    requester = FakeRequester({"output_text": "not-json"})
+    client = MetaModelClient(_settings(), requester=requester)
+
+    with pytest.raises(MetaAPIError, match="invalid structured output"):
+        client.extract_document_fields(b"synthetic", "image/jpeg", "passport")
+
+
+def test_meta_document_adapter_hmacs_document_number_without_storing_raw_value() -> None:
+    requester = FakeRequester(
+        {
+            "output_text": json.dumps(
+                {
+                    "full_name": "Synthetic Student",
+                    "date_of_birth": "2000-01-02",
+                    "document_type": "passport",
+                    "expiration_date": None,
+                    "issuing_country": "IN",
+                    "document_number": "SYNTHETIC-123",
+                    "confidence": 0.91,
+                }
+            )
+        }
+    )
+    result = MetaDocumentAnalysisAdapter(MetaModelClient(_settings(), requester=requester)).analyze(
+        b"\xff\xd8\xffsynthetic", "passport"
+    )
+
+    assert result.status == "COMPLETED"
+    assert result.document_number_hmac is not None
+    assert "SYNTHETIC-123" not in result.document_number_hmac
