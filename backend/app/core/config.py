@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     selfie_retention_days: int = 30
     liveness_max_upload_bytes: int = 10 * 1024 * 1024
     liveness_challenge_ttl_seconds: int = 120
+    face_match_threshold: float = 0.8
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",

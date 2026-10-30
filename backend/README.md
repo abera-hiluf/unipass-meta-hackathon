@@ -56,11 +56,21 @@ Uploads are limited to 5 MiB by default and validated using extension, MIME type
 
 Document analysis always performs local Pillow readability and dimension validation first. The default `DOCUMENT_ANALYSIS_PROVIDER=none` adapter returns `RETRY_REQUIRED`. Setting it to `meta` opts into the Meta Model API adapter, which sends image documents to the Responses API and validates Muse Spark structured output; it does not process PDFs, selfies, or approve identity. Document numbers are never stored raw; the adapter retains only a keyed HMAC fingerprint. SAM 3.1 is reserved for a later segmentation adapter because its documented output is streamed special-token geometry and is not OCR.
 
-The live API smoke test is never run automatically. From `backend/`, use ` $env:RUN_META_LIVE_TEST='1'; python scripts/test_meta_live.py` only with a valid local `META_API_KEY`; it sends a synthetic 1×1 PNG and prints only a safe success/failure summary.
+The live API smoke test is never run automatically. From `backend/`, use ` $env:RUN_META_LIVE_TEST='1'; python scripts/meta_live_smoke.py` only with a valid local `META_API_KEY`; it sends a synthetic 1×1 PNG and prints only a safe success/failure summary.
 
 ## Selfie liveness foundation
 
 Liveness uses `POST /api/v1/identity/verifications/{verification_id}/liveness/challenge`, followed by an authenticated capture submission to `POST /api/v1/identity/verifications/{verification_id}/liveness`. Challenges contain a short-lived randomized blink/turn sequence, are single-use, and are bound to the owning verification. The default provider is unavailable and conservatively returns `REVIEW_REQUIRED`; no liveness engine, face matching, or identity approval is enabled. Captures are private and stored under `liveness/` with configurable size and challenge-expiry limits.
+
+## Face-matching foundation
+
+Face matching uses `POST /api/v1/identity/verifications/{verification_id}/face-match` and `GET /api/v1/identity/verifications/{verification_id}/face-match`. The service retrieves the private document portrait and submitted selfie, validates both images locally, and delegates comparison to a `FaceMatchingAdapter`. No biometric provider is configured by default, so the safe result is `REVIEW_REQUIRED`. Similarity scores are not returned through ordinary API responses, and a match never approves identity. `FACE_MATCH_THRESHOLD` is a review-controlled threshold, not a probability calibration.
+
+## Central verification review
+
+`GET /api/v1/identity/status` returns the authenticated user's safe identity workflow status. Authorized users with the `admin` role can list review cases with `GET /api/v1/identity/reviews` and decide them with `POST /api/v1/identity/reviews/{verification_id}` using `approve`, `reject`, or `resubmit`. Approval requires confirmed institutional enrollment, completed document processing, `LIVE` liveness, and `MATCH` face matching; every decision records reviewer and timestamp metadata plus an audit event. No automatic approval is performed.
+
+The frontend handoff contract, endpoint matrix, response/error conventions, suggested React routes, and incomplete integration boundaries are documented in `../docs/frontend-api.md`.
 
 ## Live selfie capture
 
@@ -87,6 +97,7 @@ Database migrations are managed via Alembic:
 - No new migration is required for document upload; it reuses the existing `identity_verifications.document_storage_key` and tracking fields.
 - `0006_document_analysis`: Adds analysis metadata, safe extracted fields, portrait storage references, and expanded processing statuses.
 - `0008_liveness_tracking`: Adds liveness challenge hashes, expiry/use tracking, private capture references, assessment state, and safe reason/provider metadata.
+- `0009_face_matching`: Adds face-matching assessment state, non-public score storage, provider/reason metadata, and timestamps.
 - `0007_selfie_capture`: Adds separate selfie-submission status, consent timestamp, submission timestamp, reason code, and private storage reference.
 
 To inspect migration status:

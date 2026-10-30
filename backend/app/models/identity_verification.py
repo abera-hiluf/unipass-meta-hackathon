@@ -16,11 +16,11 @@ if TYPE_CHECKING:
 
 
 VALID_IDENTITY_VERIFICATION_TRANSITIONS = {
-    "PENDING": {"PROCESSING", "FAILED", "RETRY_REQUIRED"},
-    "PROCESSING": {"COMPLETED", "RETRY_REQUIRED", "FLAGGED", "FAILED"},
-    "RETRY_REQUIRED": {"PROCESSING", "FAILED"},
-    "FAILED": {"PROCESSING"},
-    "COMPLETED": {"APPROVED", "FLAGGED"},
+    "PENDING": {"PROCESSING", "FAILED", "RETRY_REQUIRED", "FLAGGED", "REJECTED"},
+    "PROCESSING": {"COMPLETED", "RETRY_REQUIRED", "FLAGGED", "FAILED", "REJECTED"},
+    "RETRY_REQUIRED": {"PROCESSING", "FAILED", "FLAGGED", "REJECTED"},
+    "FAILED": {"PROCESSING", "FLAGGED", "REJECTED"},
+    "COMPLETED": {"APPROVED", "FLAGGED", "REJECTED"},
     "FLAGGED": {"APPROVED", "REJECTED", "PROCESSING"},
     "APPROVED": set(),
     "REJECTED": {"PROCESSING"},
@@ -36,6 +36,15 @@ VALID_LIVENESS_TRANSITIONS = {
     "SPOOF_SUSPECTED": {"CHALLENGE_ISSUED", "REVIEW_REQUIRED"},
     "REVIEW_REQUIRED": {"CHALLENGE_ISSUED", "FAILED"},
     "FAILED": {"CHALLENGE_ISSUED"},
+}
+FACE_MATCH_STATUSES = ("NOT_STARTED", "PROCESSING", "MATCH", "NO_MATCH", "REVIEW_REQUIRED", "FAILED")
+VALID_FACE_MATCH_TRANSITIONS = {
+    "NOT_STARTED": {"PROCESSING"},
+    "PROCESSING": {"MATCH", "NO_MATCH", "REVIEW_REQUIRED", "FAILED"},
+    "MATCH": {"PROCESSING"},
+    "NO_MATCH": {"PROCESSING"},
+    "REVIEW_REQUIRED": {"PROCESSING"},
+    "FAILED": {"PROCESSING"},
 }
 
 
@@ -53,6 +62,10 @@ class IdentityVerification(Base):
         CheckConstraint(
             f"liveness_status IN {LIVENESS_STATUSES}",
             name="ck_identity_verifications_liveness_status",
+        ),
+        CheckConstraint(
+            f"face_match_status IN {FACE_MATCH_STATUSES}",
+            name="ck_identity_verifications_face_match_status",
         ),
     )
 
@@ -96,6 +109,12 @@ class IdentityVerification(Base):
     liveness_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     liveness_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     liveness_provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    face_match_status: Mapped[str] = mapped_column(String(32), nullable=False, default="NOT_STARTED", server_default="NOT_STARTED")
+    face_match_score: Mapped[float | None] = mapped_column(nullable=True)
+    face_match_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    face_match_provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    face_match_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    face_match_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
@@ -133,6 +152,13 @@ class IdentityVerification(Base):
             raise ValueError("Unsupported liveness status")
         return normalized
 
+    @validates("face_match_status")
+    def validate_face_match_status(self, _key: str, face_match_status: str) -> str:
+        normalized = face_match_status.strip().upper()
+        if normalized not in FACE_MATCH_STATUSES:
+            raise ValueError("Unsupported face-match status")
+        return normalized
+
     def transition_to(self, new_status: str | VerificationStatus) -> None:
         target = new_status.value if isinstance(new_status, VerificationStatus) else new_status.strip().upper()
         if target not in VERIFICATION_STATUSES:
@@ -152,3 +178,13 @@ class IdentityVerification(Base):
         if target not in VALID_LIVENESS_TRANSITIONS.get(self.liveness_status, set()):
             raise ValueError(f"Invalid liveness transition: {self.liveness_status} -> {target}")
         self.liveness_status = target
+
+    def transition_face_match_to(self, new_status: str) -> None:
+        target = new_status.strip().upper()
+        if target not in FACE_MATCH_STATUSES:
+            raise ValueError("Unsupported face-match status")
+        if target == self.face_match_status:
+            return
+        if target not in VALID_FACE_MATCH_TRANSITIONS.get(self.face_match_status, set()):
+            raise ValueError(f"Invalid face-match transition: {self.face_match_status} -> {target}")
+        self.face_match_status = target
