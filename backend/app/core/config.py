@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     document_analysis_provider: str = "none"
     selfie_max_upload_bytes: int = 2 * 1024 * 1024
     selfie_retention_days: int = 30
+    liveness_max_upload_bytes: int = 10 * 1024 * 1024
+    liveness_challenge_ttl_seconds: int = 120
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",

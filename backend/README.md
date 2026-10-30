@@ -58,6 +58,10 @@ Document analysis always performs local Pillow readability and dimension validat
 
 The live API smoke test is never run automatically. From `backend/`, use ` $env:RUN_META_LIVE_TEST='1'; python scripts/test_meta_live.py` only with a valid local `META_API_KEY`; it sends a synthetic 1×1 PNG and prints only a safe success/failure summary.
 
+## Selfie liveness foundation
+
+Liveness uses `POST /api/v1/identity/verifications/{verification_id}/liveness/challenge`, followed by an authenticated capture submission to `POST /api/v1/identity/verifications/{verification_id}/liveness`. Challenges contain a short-lived randomized blink/turn sequence, are single-use, and are bound to the owning verification. The default provider is unavailable and conservatively returns `REVIEW_REQUIRED`; no liveness engine, face matching, or identity approval is enabled. Captures are private and stored under `liveness/` with configurable size and challenge-expiry limits.
+
 ## Live selfie capture
 
 - `POST /api/v1/identity/verifications/{verification_id}/selfie` — Submit a consented selfie for the authenticated owner.
@@ -82,6 +86,7 @@ Database migrations are managed via Alembic:
 - `0004_institution_email_verification`: Adds development-only institution configuration, user affiliations, and hashed email-verification challenges.
 - No new migration is required for document upload; it reuses the existing `identity_verifications.document_storage_key` and tracking fields.
 - `0006_document_analysis`: Adds analysis metadata, safe extracted fields, portrait storage references, and expanded processing statuses.
+- `0008_liveness_tracking`: Adds liveness challenge hashes, expiry/use tracking, private capture references, assessment state, and safe reason/provider metadata.
 - `0007_selfie_capture`: Adds separate selfie-submission status, consent timestamp, submission timestamp, reason code, and private storage reference.
 
 To inspect migration status:

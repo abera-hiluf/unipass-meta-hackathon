@@ -10,10 +10,12 @@ from app.models.user import User
 from app.schemas.identity import IdentityDocumentResponse
 from app.schemas.document_analysis import DocumentAnalysisResponse
 from app.schemas.selfie import SelfieSubmissionResponse
+from app.schemas.liveness import LivenessChallengeResponse, LivenessResultResponse
 from app.services.analysis import DocumentAnalysisAdapter, get_document_analysis_adapter, start_document_analysis
 from app.services.documents import create_identity_verification, get_owned_identity_verification
 from app.services.storage import PrivateObjectStorage, get_storage
 from app.services.selfies import submit_selfie
+from app.services.liveness import LivenessAdapter, get_liveness_adapter, issue_liveness_challenge, submit_liveness_capture
 
 
 router = APIRouter(prefix="/identity", tags=["Identity Documents"])
@@ -86,4 +88,65 @@ async def submit_identity_selfie(
         "selfie_status": verification.selfie_status,
         "selfie_reason_code": verification.selfie_reason_code,
         "selfie_submitted_at": verification.selfie_submitted_at,
+    }
+
+
+@router.post("/verifications/{verification_id}/liveness/challenge", response_model=LivenessChallengeResponse)
+def create_liveness_challenge(
+    verification_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return issue_liveness_challenge(db, current_user, verification_id)
+
+
+@router.post("/verifications/{verification_id}/liveness", response_model=LivenessResultResponse)
+async def submit_identity_liveness(
+    verification_id: uuid.UUID,
+    challenge_id: str = Form(...),
+    consent: bool = Form(...),
+    capture_state: str = Form(...),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    storage: PrivateObjectStorage = Depends(get_storage),
+    adapter: LivenessAdapter = Depends(get_liveness_adapter),
+) -> dict:
+    verification = await submit_liveness_capture(
+        db=db,
+        user=current_user,
+        verification_id=verification_id,
+        challenge_id=challenge_id,
+        consent=consent,
+        capture_state=capture_state,
+        upload=file,
+        storage=storage,
+        adapter=adapter,
+    )
+    return {
+        "verification_id": verification.id,
+        "liveness_status": verification.liveness_status,
+        "reason_code": verification.liveness_reason_code,
+        "provider": verification.liveness_provider,
+        "completed_at": verification.liveness_completed_at,
+    }
+
+
+@router.get("/verifications/{verification_id}/liveness", response_model=LivenessResultResponse)
+def get_identity_liveness(
+    verification_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    verification = db.get(IdentityVerification, verification_id)
+    if verification is None or verification.user_id != current_user.id:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Verification not found")
+    return {
+        "verification_id": verification.id,
+        "liveness_status": verification.liveness_status,
+        "reason_code": verification.liveness_reason_code,
+        "provider": verification.liveness_provider,
+        "completed_at": verification.liveness_completed_at,
     }
