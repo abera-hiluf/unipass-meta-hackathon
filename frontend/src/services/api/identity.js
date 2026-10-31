@@ -13,7 +13,7 @@ export const submitSelfie = (id, file) => {
   const form = new FormData()
   form.append('consent', 'true')
   form.append('capture_state', 'captured')
-  form.append('file', file)
+  form.append('file', file, 'selfie.jpg')
   return api.post(`/identity/verifications/${id}/selfie`, form)
 }
 export const issueLivenessChallenge = (id) => api.post(`/identity/verifications/${id}/liveness/challenge`)
