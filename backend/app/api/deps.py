@@ -51,3 +51,14 @@ def get_current_user(
         )
 
     return user
+
+
+def get_email_verified_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if not current_user.verified_email or current_user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Verify email ownership before continuing identity verification",
+        )
+    return current_user

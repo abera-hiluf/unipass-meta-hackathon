@@ -15,7 +15,9 @@ class IdentityDocumentResponse(BaseModel):
     analysis_reason_code: str | None = None
     analysis_started_at: datetime | None = None
     analysis_completed_at: datetime | None = None
+    extracted_document_type: str | None = None
     extracted_full_name: str | None = None
     extracted_date_of_birth: date | None = None
+    extracted_expiration_date: date | None = None
     extraction_confidence: float | None = None
     portrait_available: bool = False

@@ -21,7 +21,7 @@ python -m pip install -r requirements.txt
 
 ## Run the API
 
-Before starting the API, set `JWT_SECRET_KEY` in `backend/.env` to a long random value. The signing secret is required at runtime and is never returned by the API. `JWT_ALGORITHM` and `ACCESS_TOKEN_EXPIRE_MINUTES` may also be configured there; `.env.example` contains placeholders only. The reserved Meta configuration uses `META_API_KEY`, `META_API_BASE_URL`, `META_SAM_MODEL`, and `META_VISION_MODEL`; no Meta request is made by the current implementation.
+Before starting the API, set `JWT_SECRET_KEY` in `backend/.env` to a long random value. The signing secret is required at runtime and is never returned by the API. `JWT_ALGORITHM` and `ACCESS_TOKEN_EXPIRE_MINUTES` may also be configured there; `.env.example` contains placeholders only. Meta document analysis is opt-in via `DOCUMENT_ANALYSIS_PROVIDER=meta` and the backend-only `META_API_KEY`, `META_API_BASE_URL`, and `META_VISION_MODEL` values. It sends submitted image documents to Muse Spark; review provider and data-handling implications before enabling it.
 
 ```powershell
 uvicorn app.main:app --reload
@@ -39,12 +39,15 @@ The API is available at `http://127.0.0.1:8000`. Swagger UI is available at `htt
 
 ## Institutions and email verification
 
+Authenticated account-email ownership is handled separately from institutional-email verification. Use `GET /api/v1/auth/email-verification`, `POST /api/v1/auth/email-verification/code`, and `POST /api/v1/auth/email-verification/confirm`. Identity-document and capture mutations require a confirmed email. `EMAIL_PROVIDER=none` is the safe default and reports delivery unavailable. To enable SMTP, set `EMAIL_PROVIDER=smtp`, `SMTP_HOST`, and `SMTP_SENDER`, and configure `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_STARTTLS`, `SMTP_SSL`, and `SMTP_TIMEOUT_SECONDS`. Keep SMTP credentials only in the backend environment.
+
 - `GET /api/v1/institutions` — List active institutions.
+- `GET /api/v1/institutions/me/selection` and `POST /api/v1/institutions/me/selection` — Read and save the authenticated student's institution selection.
 - `POST /api/v1/institutions/{institution_id}/email-verification` — Request verification for an authenticated user's institutional email.
 - `POST /api/v1/institutions/email-verification/confirm` — Confirm a single-use verification token.
 - `GET /api/v1/institutions/me` — View the authenticated user's own institution affiliations.
 
-The Anna University, BIT Campus, Tiruchirappalli entry is marked development-only and has no trusted email domain configured. Email verification does not confirm enrollment or grant campus-service access. No email provider is configured by default; set up a real provider before enabling delivery in a non-test environment.
+The Anna University, BIT Campus, Tiruchirappalli entry is marked development-only and has no trusted email domain configured. Saved institution selection creates no affiliation and does not confirm enrollment. Account-email ownership and institutional-email verification are separate. No email provider is configured by default; configure SMTP before enabling delivery in a non-test environment.
 
 ## Identity document upload
 
@@ -52,9 +55,9 @@ The Anna University, BIT Campus, Tiruchirappalli entry is marked development-onl
 - `GET /api/v1/identity/documents/{verification_id}` — View safe processing metadata for the authenticated owner's request.
 - `POST /api/v1/identity/documents/{verification_id}/analyze` — Start authenticated analysis for the owner's request.
 
-Uploads are limited to 5 MiB by default and validated using extension, MIME type, and file signature. The development storage provider writes private objects under `backend/.local_storage/`, which is ignored by Git; it does not provide public URLs. Production must configure private object storage with restricted access and short-lived signed URLs. Upload success creates a `PENDING` verification request only; no OCR, biometric processing, or identity approval is performed.
+Uploads are limited to 5 MiB by default and validated using extension, MIME type, and file signature. The development storage provider writes private objects under `backend/.local_storage/`, which is ignored by Git; it does not provide public URLs. Production must configure private object storage with restricted access and short-lived signed URLs. Upload success creates a `PENDING` verification request only; it is not identity approval.
 
-Document analysis always performs local Pillow readability and dimension validation first. The default `DOCUMENT_ANALYSIS_PROVIDER=none` adapter returns `RETRY_REQUIRED`. Setting it to `meta` opts into the Meta Model API adapter, which sends image documents to the Responses API and validates Muse Spark structured output; it does not process PDFs, selfies, or approve identity. Document numbers are never stored raw; the adapter retains only a keyed HMAC fingerprint. SAM 3.1 is reserved for a later segmentation adapter because its documented output is streamed special-token geometry and is not OCR.
+Document analysis always performs local Pillow readability and dimension validation first. The default `DOCUMENT_ANALYSIS_PROVIDER=none` adapter returns `RETRY_REQUIRED`. Setting it to `meta` opts into the Meta Model API adapter, which sends raster documents to the Responses API and validates Muse Spark structured output; PDF image conversion is not implemented. It stores uncertain extracted document type, name, dates, and a private cropped portrait when the model returns valid normalized portrait bounds. Document numbers are never stored raw; the adapter retains only a keyed HMAC fingerprint. Model output is evidence only and does not approve identity. No production liveness or face-matching provider is configured.
 
 The live API smoke test is never run automatically. From `backend/`, use ` $env:RUN_META_LIVE_TEST='1'; python scripts/meta_live_smoke.py` only with a valid local `META_API_KEY`; it sends a synthetic 1×1 PNG and prints only a safe success/failure summary.
 
@@ -99,6 +102,8 @@ Database migrations are managed via Alembic:
 - `0008_liveness_tracking`: Adds liveness challenge hashes, expiry/use tracking, private capture references, assessment state, and safe reason/provider metadata.
 - `0009_face_matching`: Adds face-matching assessment state, non-public score storage, provider/reason metadata, and timestamps.
 - `0007_selfie_capture`: Adds separate selfie-submission status, consent timestamp, submission timestamp, reason code, and private storage reference.
+- `0010_email_ownership`: Adds authenticated account-email verification challenges and persists a student's selected institution without creating an affiliation.
+- `0011_document_metadata`: Persists model-extracted document type and expiration date.
 
 To inspect migration status:
 

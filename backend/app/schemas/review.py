@@ -23,5 +23,6 @@ class IdentityStatusResponse(BaseModel):
     verification_status: str | None
     affiliation_statuses: list[str]
     liveness_status: str | None
+    selfie_status: str | None
     face_match_status: str | None
     document_analysis_status: str | None

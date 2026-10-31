@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
     email_provider: str = "none"
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_sender: str | None = None
+    smtp_starttls: bool = True
+    smtp_ssl: bool = False
+    smtp_timeout_seconds: float = 10.0
     document_storage_provider: str = "local"
     document_storage_path: str = str(BACKEND_DIR / ".local_storage")
     document_max_upload_bytes: int = 5 * 1024 * 1024

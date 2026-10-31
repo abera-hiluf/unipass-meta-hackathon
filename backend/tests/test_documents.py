@@ -14,6 +14,7 @@ from starlette.datastructures import Headers
 
 from app.db import Base, get_db
 from app.main import app
+from app.api.v1.auth import get_email_sender
 from app.models.identity_verification import IdentityVerification
 from app.models.user import User
 from app.services.documents import create_identity_verification
@@ -43,6 +44,17 @@ class InMemoryStorage:
         self.objects.pop(object_key, None)
 
 
+class MockEmailSender:
+    def __init__(self) -> None:
+        self.codes: list[str] = []
+
+    def send_verification_email(self, recipient, institution_name, token, expires_at) -> None:
+        return None
+
+    def send_email_ownership_code(self, recipient, code, expires_at) -> None:
+        self.codes.append(code)
+
+
 @pytest.fixture
 def document_context():
     engine = create_engine(
@@ -53,6 +65,7 @@ def document_context():
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     storage = InMemoryStorage()
+    email_sender = MockEmailSender()
 
     def override_get_db():
         db = SessionLocal()
@@ -63,13 +76,14 @@ def document_context():
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_storage] = lambda: storage
+    app.dependency_overrides[get_email_sender] = lambda: email_sender
     with TestClient(app) as client:
         yield client, SessionLocal, storage
     app.dependency_overrides.clear()
     engine.dispose()
 
 
-def register_and_login(client: TestClient, email: str) -> str:
+def register_and_login(client: TestClient, email: str, verify_email: bool = True) -> str:
     registered = client.post(
         "/api/v1/auth/register",
         json={"email": email, "password": "SecureDocumentPassword2026!"},
@@ -80,7 +94,24 @@ def register_and_login(client: TestClient, email: str) -> str:
         json={"email": email, "password": "SecureDocumentPassword2026!"},
     )
     assert login.status_code == status.HTTP_200_OK
-    return login.json()["access_token"]
+    token = login.json()["access_token"]
+    if verify_email:
+        headers = {"Authorization": f"Bearer {token}"}
+        sent = client.post(
+            "/api/v1/auth/email-verification/code",
+            headers=headers,
+            json={"email": email},
+        )
+        assert sent.status_code == status.HTTP_202_ACCEPTED
+        sender = app.dependency_overrides[get_email_sender]()
+        code = sender.codes[-1]
+        confirmed = client.post(
+            "/api/v1/auth/email-verification/confirm",
+            headers=headers,
+            json={"code": code},
+        )
+        assert confirmed.status_code == status.HTTP_200_OK
+    return token
 
 
 def pdf_file(name: str = "passport.pdf", content: bytes = b"%PDF-1.7\n%%EOF") -> tuple:
@@ -95,6 +126,18 @@ def test_upload_requires_authentication(document_context) -> None:
         files={"file": pdf_file()},
     )
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_upload_requires_confirmed_email_ownership(document_context) -> None:
+    client, _, _ = document_context
+    token = register_and_login(client, "unverified-document@example.com", verify_email=False)
+    response = client.post(
+        "/api/v1/identity/documents",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"document_type": "passport"},
+        files={"file": pdf_file()},
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
 def test_valid_upload_is_private_and_pending(document_context) -> None:
@@ -275,8 +318,10 @@ def test_mock_analysis_extracts_safe_fields_and_private_portrait(document_contex
         reason_code="synthetic_fields_extracted",
         source="mock",
         confidence=0.91,
+        extracted_document_type="passport",
         full_name="  Synthetic Student  ",
         date_of_birth=__import__("datetime").datetime(2000, 1, 2),
+        expiration_date=__import__("datetime").date(2030, 1, 2),
         document_number_hmac="a" * 64,
         portrait_bytes=png_bytes(),
         portrait_extension=".png",
@@ -291,7 +336,9 @@ def test_mock_analysis_extracts_safe_fields_and_private_portrait(document_contex
     body = response.json()
     assert body["status"] == "COMPLETED"
     assert body["extracted_full_name"] == "Synthetic Student"
+    assert body["extracted_document_type"] == "passport"
     assert body["extracted_date_of_birth"] == "2000-01-02"
+    assert body["extracted_expiration_date"] == "2030-01-02"
     assert body["portrait_available"] is True
     assert "document_number_hmac" not in body
     assert any(key.startswith("documents/portraits/") for key in storage.objects)
@@ -299,6 +346,7 @@ def test_mock_analysis_extracts_safe_fields_and_private_portrait(document_contex
     with SessionLocal() as db:
         record = db.get(IdentityVerification, uuid.UUID(uploaded.json()["id"]))
         assert record.document_number_hmac == "a" * 64
+        assert record.extracted_expiration_date.isoformat() == "2030-01-02"
 
 
 def test_portrait_not_found_is_explicitly_retryable(document_context) -> None:

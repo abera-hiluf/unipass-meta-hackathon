@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_email_verified_user
 from app.db import get_db
 from app.models.identity_verification import IdentityVerification
 from app.models.user import User
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/identity", tags=["Identity Documents"])
 async def upload_identity_document(
     document_type: str = Form(...),
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_email_verified_user),
     db: Session = Depends(get_db),
     storage: PrivateObjectStorage = Depends(get_storage),
 ) -> IdentityVerification:
@@ -45,7 +45,7 @@ async def upload_identity_document(
 @router.get("/documents/{verification_id}", response_model=IdentityDocumentResponse)
 def get_identity_document_status(
     verification_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_email_verified_user),
     db: Session = Depends(get_db),
 ) -> IdentityVerification:
     return get_owned_identity_verification(db, current_user, verification_id)
@@ -54,7 +54,7 @@ def get_identity_document_status(
 @router.post("/documents/{verification_id}/analyze", response_model=DocumentAnalysisResponse)
 def analyze_identity_document(
     verification_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_email_verified_user),
     db: Session = Depends(get_db),
     storage: PrivateObjectStorage = Depends(get_storage),
     adapter: DocumentAnalysisAdapter = Depends(get_document_analysis_adapter),
@@ -74,7 +74,7 @@ async def submit_identity_selfie(
     consent: bool = Form(...),
     capture_state: str = Form(...),
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_email_verified_user),
     db: Session = Depends(get_db),
     storage: PrivateObjectStorage = Depends(get_storage),
 ) -> dict:
@@ -98,7 +98,7 @@ async def submit_identity_selfie(
 @router.post("/verifications/{verification_id}/liveness/challenge", response_model=LivenessChallengeResponse)
 def create_liveness_challenge(
     verification_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_email_verified_user),
     db: Session = Depends(get_db),
 ) -> dict:
     return issue_liveness_challenge(db, current_user, verification_id)
@@ -111,7 +111,7 @@ async def submit_identity_liveness(
     consent: bool = Form(...),
     capture_state: str = Form(...),
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_email_verified_user),
     db: Session = Depends(get_db),
     storage: PrivateObjectStorage = Depends(get_storage),
     adapter: LivenessAdapter = Depends(get_liveness_adapter),
@@ -159,7 +159,7 @@ def get_identity_liveness(
 @router.post("/verifications/{verification_id}/face-match", response_model=FaceMatchResponse)
 def run_identity_face_match(
     verification_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_email_verified_user),
     db: Session = Depends(get_db),
     storage: PrivateObjectStorage = Depends(get_storage),
     adapter: FaceMatchingAdapter = Depends(get_face_matching_adapter),

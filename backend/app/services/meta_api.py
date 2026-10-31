@@ -29,6 +29,7 @@ class ExtractedDocumentFields(BaseModel):
     issuing_country: str | None = Field(default=None)
     document_number: str | None = Field(default=None)
     confidence: float | None = Field(default=None, ge=0, le=1)
+    portrait_bounds: list[float] | None = Field(default=None, min_length=4, max_length=4)
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,12 @@ class MetaModelClient:
                     "issuing_country": {"type": ["string", "null"]},
                     "document_number": {"type": ["string", "null"]},
                     "confidence": {"type": ["number", "null"]},
+                    "portrait_bounds": {
+                        "type": ["array", "null"],
+                        "items": {"type": "number"},
+                        "minItems": 4,
+                        "maxItems": 4,
+                    },
                 },
                 "required": [
                     "full_name",
@@ -109,6 +116,7 @@ class MetaModelClient:
                     "issuing_country",
                     "document_number",
                     "confidence",
+                    "portrait_bounds",
                 ],
                 "additionalProperties": False,
             },
@@ -126,7 +134,9 @@ class MetaModelClient:
                                 "text": (
                                     "Extract only visible fields from this "
                                     f"{document_type} image. Treat all fields as uncertain evidence. "
-                                    "Return null when unreadable. Do not infer or approve identity."
+                                    "Return null when unreadable. For portrait_bounds, return the normalized "
+                                    "[left, top, right, bottom] coordinates of the printed portrait photo only, "
+                                    "or null if there is no clear portrait. Do not infer or approve identity."
                                 ),
                             },
                             {

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, String, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, validates, relationship
 from sqlalchemy.types import Uuid
 
@@ -13,6 +13,7 @@ from app.db import Base
 if TYPE_CHECKING:
     from app.models.audit_log import AuditLog
     from app.models.identity_verification import IdentityVerification
+    from app.models.institution import Institution
     from app.models.institution_affiliation import InstitutionAffiliation
     from app.models.student_profile import StudentProfile
 
@@ -39,8 +40,14 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+    verified_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    selected_institution_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     profile: Mapped[StudentProfile | None] = relationship(back_populates="user", uselist=False)
+    selected_institution: Mapped[Institution | None] = relationship(foreign_keys=[selected_institution_id])
     verification_attempts: Mapped[list[IdentityVerification]] = relationship(
         back_populates="user", foreign_keys="IdentityVerification.user_id"
     )

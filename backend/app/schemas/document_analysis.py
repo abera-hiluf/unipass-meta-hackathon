@@ -9,7 +9,9 @@ class DocumentAnalysisResponse(BaseModel):
     source: str
     analysis_started_at: datetime | None
     analysis_completed_at: datetime | None
+    extracted_document_type: str | None = None
     extracted_full_name: str | None
     extracted_date_of_birth: date | None
+    extracted_expiration_date: date | None = None
     extraction_confidence: float | None
     portrait_available: bool

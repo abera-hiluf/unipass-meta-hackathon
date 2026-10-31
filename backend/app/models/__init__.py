@@ -2,6 +2,7 @@ from app.models.audit_log import AuditLog
 from app.models.enums import VERIFICATION_STATUSES, VerificationStatus
 from app.models.identity_verification import FACE_MATCH_STATUSES, IdentityVerification, LIVENESS_STATUSES, SELFIE_STATUSES, VALID_IDENTITY_VERIFICATION_TRANSITIONS
 from app.models.email_verification import EmailVerificationChallenge
+from app.models.email_ownership_challenge import EmailOwnershipChallenge
 from app.models.institution import Institution, InstitutionEmailDomain
 from app.models.institution_affiliation import (
     AFFILIATION_STATUSES,
@@ -22,6 +23,7 @@ __all__ = [
     "AFFILIATION_STATUSES",
     "VALID_AFFILIATION_TRANSITIONS",
     "EmailVerificationChallenge",
+    "EmailOwnershipChallenge",
     "StudentProfile",
     "User",
     "VerificationStatus",

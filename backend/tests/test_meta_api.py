@@ -41,6 +41,7 @@ def test_meta_client_uses_responses_api_and_validates_structured_output() -> Non
                     "issuing_country": "IN",
                     "document_number": "SYNTHETIC-123",
                     "confidence": 0.91,
+                    "portrait_bounds": None,
                 }
             )
         }
@@ -76,6 +77,7 @@ def test_meta_document_adapter_hmacs_document_number_without_storing_raw_value()
                     "issuing_country": "IN",
                     "document_number": "SYNTHETIC-123",
                     "confidence": 0.91,
+                    "portrait_bounds": None,
                 }
             )
         }
@@ -85,5 +87,41 @@ def test_meta_document_adapter_hmacs_document_number_without_storing_raw_value()
     )
 
     assert result.status == "COMPLETED"
+    assert result.extracted_document_type == "passport"
     assert result.document_number_hmac is not None
     assert "SYNTHETIC-123" not in result.document_number_hmac
+
+
+def test_meta_document_adapter_extracts_expiry_and_private_portrait_crop() -> None:
+    from io import BytesIO
+
+    from PIL import Image
+
+    image = Image.new("RGB", (200, 200), "white")
+    output = BytesIO()
+    image.save(output, format="JPEG")
+    requester = FakeRequester(
+        {
+            "output_text": json.dumps(
+                {
+                    "full_name": "Synthetic Student",
+                    "date_of_birth": "2000-01-02",
+                    "document_type": "passport",
+                    "expiration_date": "2030-01-02",
+                    "issuing_country": "IN",
+                    "document_number": "SYNTHETIC-123",
+                    "confidence": 0.91,
+                    "portrait_bounds": [0.1, 0.1, 0.6, 0.8],
+                }
+            )
+        }
+    )
+    result = MetaDocumentAnalysisAdapter(MetaModelClient(_settings(), requester=requester)).analyze(
+        output.getvalue(), "passport"
+    )
+
+    assert result.expiration_date.isoformat() == "2030-01-02"
+    assert result.portrait_bytes is not None
+    with Image.open(BytesIO(result.portrait_bytes)) as portrait:
+        assert portrait.size == (100, 140)
+    assert result.portrait_extension == ".jpg"

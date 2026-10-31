@@ -4,7 +4,21 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db import get_db
 from app.models.user import User
-from app.schemas.auth import TokenResponse, UserLoginRequest, UserRegisterRequest, UserResponse
+from app.schemas.auth import (
+    EmailOwnershipCodeRequest,
+    EmailOwnershipConfirmRequest,
+    EmailOwnershipStatusResponse,
+    TokenResponse,
+    UserLoginRequest,
+    UserRegisterRequest,
+    UserResponse,
+)
+from app.services.email import EmailSender, get_email_sender
+from app.services.email_ownership import (
+    confirm_email_ownership_code,
+    email_ownership_status,
+    send_email_ownership_code,
+)
 from app.services import auth as auth_service
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -54,3 +68,30 @@ def get_current_account(
 ) -> User:
     """Retrieve safe account details for the authenticated bearer token holder."""
     return current_user
+
+
+@router.get("/email-verification", response_model=EmailOwnershipStatusResponse)
+def get_email_verification_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return email_ownership_status(db, current_user)
+
+
+@router.post("/email-verification/code", response_model=EmailOwnershipStatusResponse, status_code=status.HTTP_202_ACCEPTED)
+def issue_email_verification_code(
+    payload: EmailOwnershipCodeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    sender: EmailSender = Depends(get_email_sender),
+) -> dict:
+    return send_email_ownership_code(db, current_user, str(payload.email), sender)
+
+
+@router.post("/email-verification/confirm", response_model=EmailOwnershipStatusResponse)
+def confirm_email_verification_code(
+    payload: EmailOwnershipConfirmRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return confirm_email_ownership_code(db, current_user, payload.code)

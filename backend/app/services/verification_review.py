@@ -40,6 +40,7 @@ def identity_status(db: Session, user: User) -> dict:
             "verification_status": None,
             "affiliation_statuses": affiliations,
             "liveness_status": None,
+            "selfie_status": None,
             "face_match_status": None,
             "document_analysis_status": None,
         }
@@ -55,6 +56,7 @@ def identity_status(db: Session, user: User) -> dict:
         "verification_status": verification.status,
         "affiliation_statuses": affiliations,
         "liveness_status": verification.liveness_status,
+        "selfie_status": verification.selfie_status,
         "face_match_status": verification.face_match_status,
         "document_analysis_status": verification.status if verification.analysis_completed_at else None,
     }

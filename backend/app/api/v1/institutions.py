@@ -1,11 +1,12 @@
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db import get_db
 from app.models.institution_affiliation import InstitutionAffiliation
+from app.models.institution import Institution
 from app.models.user import User
 from app.schemas.institutions import (
     AffiliationResponse,
@@ -13,6 +14,8 @@ from app.schemas.institutions import (
     EmailVerificationResponse,
     InstitutionEmailVerificationRequest,
     InstitutionResponse,
+    InstitutionSelectionRequest,
+    InstitutionSelectionResponse,
 )
 from app.services.email import EmailSender, get_email_sender
 from app.services.institutions import (
@@ -24,6 +27,42 @@ from app.services.institutions import (
 
 
 router = APIRouter(prefix="/institutions", tags=["Institutions"])
+
+
+def _require_student(user: User) -> None:
+    if user.role != "student":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student account required")
+
+
+@router.get("/me/selection", response_model=InstitutionSelectionResponse)
+def get_my_institution_selection(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> InstitutionSelectionResponse:
+    _require_student(current_user)
+    institution = db.get(Institution, current_user.selected_institution_id) if current_user.selected_institution_id else None
+    return InstitutionSelectionResponse(
+        institution_id=current_user.selected_institution_id,
+        institution_name=institution.official_display_name if institution else None,
+    )
+
+
+@router.post("/me/selection", response_model=InstitutionSelectionResponse)
+def save_my_institution_selection(
+    payload: InstitutionSelectionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> InstitutionSelectionResponse:
+    _require_student(current_user)
+    institution = db.get(Institution, payload.institution_id)
+    if institution is None or not institution.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Institution not found")
+    current_user.selected_institution_id = institution.id
+    db.commit()
+    return InstitutionSelectionResponse(
+        institution_id=institution.id,
+        institution_name=institution.official_display_name,
+    )
 
 
 @router.get("", response_model=list[InstitutionResponse])

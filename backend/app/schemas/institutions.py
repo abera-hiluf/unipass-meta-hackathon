@@ -47,3 +47,13 @@ class AffiliationResponse(BaseModel):
     eligibility_source: str | None
     eligibility_checked_at: datetime | None
     eligibility_reason_code: str | None
+
+
+class InstitutionSelectionRequest(BaseModel):
+    institution_id: uuid.UUID
+
+
+class InstitutionSelectionResponse(BaseModel):
+    institution_id: uuid.UUID | None
+    institution_name: str | None
+    enrollment_status: str = "NOT_VERIFIED"

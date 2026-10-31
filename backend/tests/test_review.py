@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db import Base
 from app.models import AuditLog, IdentityVerification, Institution, InstitutionAffiliation, User
+from app.schemas.review import IdentityStatusResponse
 from app.services.verification_review import identity_status, review_case
 
 
@@ -68,4 +69,25 @@ def test_identity_status_is_safe_and_non_admin_cannot_review(session) -> None:
     session.commit()
     status_result = identity_status(session, student)
     assert status_result["outcome"] == "PENDING"
+    assert status_result["selfie_status"] is None
     assert "document_storage_key" not in status_result
+
+
+def test_identity_status_returns_actual_selfie_status_without_storage_details(session) -> None:
+    student = User(email="selfie-status@example.com", hashed_password="synthetic")
+    session.add(student)
+    session.flush()
+    verification = IdentityVerification(
+        user_id=student.id,
+        status="PENDING",
+        selfie_status="SUBMITTED",
+        selfie_storage_key="private/selfie/object",
+    )
+    session.add(verification)
+    session.commit()
+
+    status_result = identity_status(session, student)
+
+    assert status_result["selfie_status"] == "SUBMITTED"
+    assert "selfie_storage_key" not in status_result
+    assert IdentityStatusResponse.model_validate(status_result).selfie_status == "SUBMITTED"

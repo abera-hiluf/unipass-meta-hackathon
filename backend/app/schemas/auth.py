@@ -59,3 +59,26 @@ class UserResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class EmailOwnershipCodeRequest(BaseModel):
+    email: EmailStr
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email_input(cls, value: str) -> str:
+        if isinstance(value, str):
+            return value.strip().casefold()
+        return value
+
+
+class EmailOwnershipConfirmRequest(BaseModel):
+    code: str = Field(..., pattern=r"^[0-9]{6}$")
+
+
+class EmailOwnershipStatusResponse(BaseModel):
+    status: str
+    email: EmailStr | None
+    verified_email: EmailStr | None
+    expires_at: datetime | None
+    resend_available_at: datetime | None
