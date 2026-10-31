@@ -6,6 +6,7 @@ Create Date: 2026-10-29
 """
 
 from collections.abc import Sequence
+import uuid
 
 from alembic import op
 import sqlalchemy as sa
@@ -17,10 +18,18 @@ down_revision: str | None = "0003_add_user_hashed_password"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-PILOT_INSTITUTION_ID = "00000000-0000-0000-0000-000000000004"
+PILOT_INSTITUTION_ID = uuid.UUID("00000000-0000-0000-0000-000000000004")
 
 
 def upgrade() -> None:
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=32),
+        type_=sa.String(length=64),
+        existing_nullable=False,
+    )
+
     op.create_table(
         "institutions",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -96,15 +105,27 @@ def upgrade() -> None:
             "INSERT INTO institutions (id, slug, official_display_name, is_active, is_development_only) "
             "VALUES (:id, :slug, :display_name, TRUE, TRUE)"
         ).bindparams(
-            id=PILOT_INSTITUTION_ID,
-            slug="anna-university-bit-campus-development",
-            display_name="Anna University, BIT Campus, Tiruchirappalli",
+            sa.bindparam(
+                "id",
+                value=PILOT_INSTITUTION_ID,
+                type_=postgresql.UUID(as_uuid=True),
+            ),
+            sa.bindparam("slug", value="anna-university-bit-campus-development"),
+            sa.bindparam("display_name", value="Anna University, BIT Campus, Tiruchirappalli"),
         )
     )
 
 
 def downgrade() -> None:
-    op.execute(sa.text("DELETE FROM institutions WHERE id = :id").bindparams(id=PILOT_INSTITUTION_ID))
+    op.execute(
+        sa.text("DELETE FROM institutions WHERE id = :id").bindparams(
+            sa.bindparam(
+                "id",
+                value=PILOT_INSTITUTION_ID,
+                type_=postgresql.UUID(as_uuid=True),
+            )
+        )
+    )
     op.drop_index("ix_email_verification_challenges_token_hash", table_name="email_verification_challenges")
     op.drop_index("ix_email_verification_challenges_expires_at", table_name="email_verification_challenges")
     op.drop_index("ix_email_verification_challenges_affiliation_id", table_name="email_verification_challenges")
