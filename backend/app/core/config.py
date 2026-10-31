@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,10 +17,22 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://localhost:5432/unipass"
 
     # Reserved for the future Meta Model API provider. No calls are made here.
-    meta_api_key: SecretStr | None = None
-    meta_api_base_url: str = "https://api.meta.ai/v1"
-    meta_sam_model: str = "sam-3.1"
-    meta_vision_model: str = "muse-spark-1.3"
+    meta_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("META_API_KEY", "meta_api_key"),
+    )
+    meta_api_base_url: str = Field(
+        default="https://api.meta.ai/v1",
+        validation_alias=AliasChoices("META_API_BASE_URL", "meta_api_base_url"),
+    )
+    meta_sam_model: str = Field(
+        default="sam-3.1",
+        validation_alias=AliasChoices("META_SAM_MODEL", "meta_sam_model"),
+    )
+    meta_vision_model: str = Field(
+        default="muse-spark-1.3",
+        validation_alias=AliasChoices("META_VISION_MODEL", "meta_vision_model"),
+    )
     meta_api_timeout_seconds: float = 20.0
 
     # Keyed HMAC secret for document identifier hashing (kept outside database)

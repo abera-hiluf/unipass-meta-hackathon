@@ -9,7 +9,7 @@ class UserRegisterRequest(BaseModel):
 
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128, description="Password must be at least 8 characters")
-    role: str = Field(default="student", description="Role: 'student' or 'admin'")
+    role: str = Field(default="student", description="Public registration is limited to student accounts")
 
     @field_validator("email", mode="before")
     @classmethod
@@ -22,8 +22,8 @@ class UserRegisterRequest(BaseModel):
     @classmethod
     def validate_role(cls, v: str) -> str:
         cleaned = v.strip().lower()
-        if cleaned not in ("student", "admin"):
-            raise ValueError("Role must be 'student' or 'admin'")
+        if cleaned != "student":
+            raise ValueError("Public registration is limited to student accounts")
         return cleaned
 
 

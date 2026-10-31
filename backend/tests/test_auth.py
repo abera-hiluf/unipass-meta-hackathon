@@ -179,6 +179,16 @@ def test_register_validation_errors(client: TestClient) -> None:
     )
     assert bad_role_res.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
+    admin_role_res = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "self-assigned-admin@email.edu",
+            "password": "validPassword123!",
+            "role": "admin",
+        },
+    )
+    assert admin_role_res.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
 
 # ==============================================================================
 # 3. Login API Tests
