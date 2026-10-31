@@ -1,0 +1,2 @@
+export function Feedback({ error, message }) { return <>{error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</p>}{message && <p role="status" className="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">{message}</p>}</> }
+export function Loading({ label = 'Loading…' }) { return <div className="animate-pulse rounded-2xl bg-slate-100 p-6 text-sm text-slate-400">{label}</div> }
