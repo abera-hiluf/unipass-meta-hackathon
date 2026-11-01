@@ -8,6 +8,7 @@ class IdentityDocumentResponse(BaseModel):
     id: uuid.UUID
     document_type: str
     status: str
+    email_verification_bypassed: bool = False
     reason_code: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

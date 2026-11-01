@@ -16,6 +16,7 @@ from app.db import Base, get_db
 from app.main import app
 from app.api.v1.auth import get_email_sender
 from app.models.identity_verification import IdentityVerification
+from app.models.institution import Institution
 from app.models.user import User
 from app.services.documents import create_identity_verification
 from app.services.analysis import DocumentAnalysisResult, MockDocumentAnalysisAdapter, get_document_analysis_adapter
@@ -137,7 +138,217 @@ def test_upload_requires_confirmed_email_ownership(document_context) -> None:
         data={"document_type": "passport"},
         files={"file": pdf_file()},
     )
+    assert response.status_code == status.HTTP_403_FORBIDDEN, response.json()
+    assert response.json()["detail"] == "Verify email ownership before continuing identity verification"
+    identity_status = client.get(
+        "/api/v1/identity/status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert identity_status.status_code == status.HTTP_200_OK
+    assert identity_status.json()["email_ownership_required"] is True
+
+
+def test_demo_mode_allows_only_synthetic_user_and_records_bypass(document_context, monkeypatch) -> None:
+    client, SessionLocal, storage = document_context
+    monkeypatch.setattr(settings, "identity_demo_mode", True)
+
+    token = register_and_login(client, "demo@example.com", verify_email=False)
+    headers = {"Authorization": f"Bearer {token}"}
+    uploaded = client.post(
+        "/api/v1/identity/documents",
+        headers=headers,
+        data={"document_type": "passport", "demo_confirmation_complete": "true"},
+        files={"file": pdf_file("demo-passport.pdf")},
+    )
+
+    assert uploaded.status_code == status.HTTP_201_CREATED
+    assert uploaded.json()["status"] == "PENDING"
+    assert uploaded.json()["email_verification_bypassed"] is True
+    assert "document_storage_key" not in uploaded.json()
+    assert len(storage.objects) == 1
+    invalid_document = client.post(
+        "/api/v1/identity/documents",
+        headers=headers,
+        data={"document_type": "passport", "demo_confirmation_complete": "true"},
+        files={"file": ("spoofed-passport.pdf", b"not a PDF", "application/pdf")},
+    )
+    assert invalid_document.status_code == status.HTTP_400_BAD_REQUEST
+
+    analysis = client.post(
+        f"/api/v1/identity/documents/{uploaded.json()['id']}/analyze",
+        headers=headers,
+    )
+    assert analysis.status_code == status.HTTP_200_OK
+    assert analysis.json()["status"] == "RETRY_REQUIRED"
+
+    email_status = client.get("/api/v1/auth/email-verification", headers=headers)
+    selection = client.get("/api/v1/institutions/me/selection", headers=headers)
+    identity_status = client.get("/api/v1/identity/status", headers=headers)
+    assert email_status.status_code == status.HTTP_200_OK
+    assert email_status.json()["verified_email"] is None
+    assert selection.status_code == status.HTTP_200_OK
+    assert selection.json()["enrollment_status"] == "NOT_VERIFIED"
+    assert identity_status.status_code == status.HTTP_200_OK
+    assert identity_status.json()["identity_demo_mode"] is True
+    assert identity_status.json()["email_ownership_required"] is False
+
+    with SessionLocal() as db:
+        record = db.get(IdentityVerification, uuid.UUID(uploaded.json()["id"]))
+        assert record is not None
+        assert record.email_verification_bypassed is True
+
+
+def test_demo_mode_does_not_allow_unverified_real_email(document_context, monkeypatch) -> None:
+    client, _, _ = document_context
+    monkeypatch.setattr(settings, "identity_demo_mode", True)
+    token = register_and_login(client, "real-user@gmail.com", verify_email=False)
+
+    response = client.post(
+        "/api/v1/identity/documents",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"document_type": "passport"},
+        files={"file": pdf_file()},
+    )
+
+    assert "authorization" in response.request.headers
+    assert response.status_code == status.HTTP_403_FORBIDDEN, response.json()
+
+
+def test_demo_mode_does_not_allow_unlisted_example_account(document_context, monkeypatch) -> None:
+    client, _, _ = document_context
+    monkeypatch.setattr(settings, "identity_demo_mode", True)
+    token = register_and_login(client, "other-student@example.com", verify_email=False)
+
+    response = client.post(
+        "/api/v1/identity/documents",
+        headers={"Authorization": "Bearer " + token},
+        data={"document_type": "passport"},
+        files={"file": pdf_file()},
+    )
+
+    assert "authorization" in response.request.headers
     assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_demo_mode_requires_frontend_confirmation_for_designated_account(document_context, monkeypatch) -> None:
+    client, SessionLocal, _ = document_context
+    monkeypatch.setattr(settings, "identity_demo_mode", True)
+    token = register_and_login(client, "demo@example.com", verify_email=False)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    missing_confirmation = client.post(
+        "/api/v1/identity/documents",
+        headers=headers,
+        data={"document_type": "passport"},
+        files={"file": pdf_file()},
+    )
+    mismatched_confirmation = client.post(
+        "/api/v1/identity/documents",
+        headers=headers,
+        data={"document_type": "passport", "demo_confirmation_complete": "false"},
+        files={"file": pdf_file()},
+    )
+
+    assert missing_confirmation.status_code == status.HTTP_403_FORBIDDEN
+    assert mismatched_confirmation.status_code == status.HTTP_403_FORBIDDEN
+    with SessionLocal() as db:
+        assert db.query(IdentityVerification).count() == 0
+
+
+def test_demo_mode_still_enforces_default_five_megabyte_limit(document_context, monkeypatch) -> None:
+    client, _, storage = document_context
+    monkeypatch.setattr(settings, "identity_demo_mode", True)
+    token = register_and_login(client, "demo@example.com", verify_email=False)
+
+    oversized_content = b"%PDF-1.7\n" + b"x" * (5 * 1024 * 1024) + b"\n%%EOF"
+    response = client.post(
+        "/api/v1/identity/documents",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"document_type": "passport", "demo_confirmation_complete": "true"},
+        files={"file": pdf_file("large.pdf", oversized_content)},
+    )
+
+    assert response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    assert storage.objects == {}
+
+
+def test_demo_identity_flow_completes_upload_analysis_and_step_three_prerequisite(
+    document_context, monkeypatch
+) -> None:
+    client, SessionLocal, _ = document_context
+    monkeypatch.setattr(settings, "identity_demo_mode", True)
+    token = register_and_login(client, "demo@example.com", verify_email=False)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with SessionLocal() as db:
+        institution = Institution(
+            slug="demo-flow-institution",
+            official_display_name="Demo Flow University",
+            is_active=True,
+            is_development_only=True,
+        )
+        db.add(institution)
+        db.commit()
+        institution_id = institution.id
+
+    saved_selection = client.post(
+        "/api/v1/institutions/me/selection",
+        headers=headers,
+        json={"institution_id": str(institution_id)},
+    )
+    assert saved_selection.status_code == status.HTTP_200_OK
+    assert saved_selection.json()["institution_id"] == str(institution_id)
+    assert saved_selection.json()["enrollment_status"] == "NOT_VERIFIED"
+
+    upload = client.post(
+        "/api/v1/identity/documents",
+        headers=headers,
+        data={"document_type": "passport", "demo_confirmation_complete": "true"},
+        files={"file": pdf_file("demo-flow.pdf")},
+    )
+    assert upload.status_code == status.HTTP_201_CREATED
+    verification_id = upload.json()["id"]
+
+    completed_analysis = DocumentAnalysisResult(
+        status="COMPLETED",
+        reason_code="synthetic_analysis_complete",
+        source="synthetic_test",
+    )
+    app.dependency_overrides[get_document_analysis_adapter] = lambda: MockDocumentAnalysisAdapter(
+        result=completed_analysis
+    )
+    analysis = client.post(
+        f"/api/v1/identity/documents/{verification_id}/analyze",
+        headers=headers,
+    )
+    status_response = client.get("/api/v1/identity/status", headers=headers)
+    email_response = client.get("/api/v1/auth/email-verification", headers=headers)
+
+    assert analysis.status_code == status.HTTP_200_OK
+    assert analysis.json()["status"] == "COMPLETED"
+    assert analysis.json()["analysis_completed_at"] is not None
+    assert status_response.status_code == status.HTTP_200_OK
+    assert status_response.json()["document_analysis_status"] == "COMPLETED"
+    assert status_response.json()["outcome"] == "PENDING"
+    assert email_response.status_code == status.HTTP_200_OK
+    assert email_response.json()["verified_email"] is None
+
+
+def test_dashboard_api_requests_succeed_for_authenticated_student(document_context) -> None:
+    client, _, _ = document_context
+    token = register_and_login(client, "dashboard-student@example.com")
+    headers = {"Authorization": "Bearer " + token}
+
+    auth_response = client.get("/api/v1/auth/me", headers=headers)
+    identity_response = client.get("/api/v1/identity/status", headers=headers)
+    affiliation_response = client.get("/api/v1/institutions/me", headers=headers)
+
+    assert auth_response.status_code == status.HTTP_200_OK, auth_response.json()
+    assert "authorization" in identity_response.request.headers
+    assert identity_response.status_code == status.HTTP_200_OK, identity_response.json()
+    assert identity_response.json()["outcome"] == "PENDING"
+    assert affiliation_response.status_code == status.HTTP_200_OK, affiliation_response.json()
+    assert affiliation_response.json() == []
 
 
 def test_valid_upload_is_private_and_pending(document_context) -> None:
@@ -154,6 +365,7 @@ def test_valid_upload_is_private_and_pending(document_context) -> None:
     body = response.json()
     assert body["document_type"] == "passport"
     assert body["status"] == "PENDING"
+    assert body["email_verification_bypassed"] is False
     assert body["reason_code"] == "uploaded_pending_processing"
     assert "document_storage_key" not in body
     assert len(storage.objects) == 1

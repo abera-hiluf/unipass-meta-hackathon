@@ -18,6 +18,8 @@ class IdentityReviewResponse(BaseModel):
 
 
 class IdentityStatusResponse(BaseModel):
+    identity_demo_mode: bool = False
+    email_ownership_required: bool = False
     verification_id: UUID | None
     outcome: str
     verification_status: str | None

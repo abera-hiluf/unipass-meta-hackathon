@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.types import Uuid
 
@@ -78,6 +78,9 @@ class IdentityVerification(Base):
         nullable=False,
         default=VerificationStatus.PENDING.value,
         server_default=VerificationStatus.PENDING.value,
+    )
+    email_verification_bypassed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
     )
     document_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     document_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)

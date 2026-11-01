@@ -31,6 +31,8 @@ The API is available at `http://127.0.0.1:8000`. Swagger UI is available at `htt
 
 `GET /api/v1/db-health` runs `SELECT 1` through the configured Supabase Session Pooler connection. It returns `200` when PostgreSQL is reachable and a safe `503` response when it is unavailable. The root `/health` endpoint does not depend on PostgreSQL.
 
+Apply database revisions before starting the API against an existing database; migrations are not run automatically at startup. From `backend/`, run `python -m alembic upgrade head`. A successful `/api/v1/db-health` check only confirms connectivity and does not guarantee that the schema matches the application models.
+
 ## Authentication Endpoints
 
 - `POST /api/v1/auth/register` — Register a student or admin user account (uses Argon2 password hashing). Returns account metadata without credentials.
@@ -40,6 +42,8 @@ The API is available at `http://127.0.0.1:8000`. Swagger UI is available at `htt
 ## Institutions and email verification
 
 Authenticated account-email ownership is handled separately from institutional-email verification. Use `GET /api/v1/auth/email-verification`, `POST /api/v1/auth/email-verification/code`, and `POST /api/v1/auth/email-verification/confirm`. Identity-document and capture mutations require a confirmed email. `EMAIL_PROVIDER=none` is the safe default and reports delivery unavailable. To enable SMTP, set `EMAIL_PROVIDER=smtp`, `SMTP_HOST`, and `SMTP_SENDER`, and configure `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_STARTTLS`, `SMTP_SSL`, and `SMTP_TIMEOUT_SECONDS`. Keep SMTP credentials only in the backend environment.
+
+`IDENTITY_DEMO_MODE=false` is the default. For local or development demonstrations only, set it to `true` to allow the authenticated account named by `IDENTITY_DEMO_ACCOUNT_EMAIL` (default: `demo@example.com`). The designated account must use the reserved `example.com` domain; other `example.com` accounts remain blocked. Configuration validation rejects the flag outside local/development and rejects a designated email outside `example.com`. Demo submissions record `email_verification_bypassed=true` and do not change account email verification, enrollment, or identity approval. Do not use real identity documents in demo mode.
 
 - `GET /api/v1/institutions` — List active institutions.
 - `GET /api/v1/institutions/me/selection` and `POST /api/v1/institutions/me/selection` — Read and save the authenticated student's institution selection.
@@ -56,6 +60,8 @@ The Anna University, BIT Campus, Tiruchirappalli entry is marked development-onl
 - `POST /api/v1/identity/documents/{verification_id}/analyze` — Start authenticated analysis for the owner's request.
 
 Uploads are limited to 5 MiB by default and validated using extension, MIME type, and file signature. The development storage provider writes private objects under `backend/.local_storage/`, which is ignored by Git; it does not provide public URLs. Production must configure private object storage with restricted access and short-lived signed URLs. Upload success creates a `PENDING` verification request only; it is not identity approval.
+
+When `IDENTITY_DEMO_MODE=true` in local/development and the authenticated account exactly matches `IDENTITY_DEMO_ACCOUNT_EMAIL`, document upload can continue without account-email ownership confirmation only when the existing upload request includes `demo_confirmation_complete=true`. The frontend adds this field only after its clearly labelled demo confirmation step. This is a demo-only acknowledgement, not evidence of email ownership. The bypass is recorded on the created identity-verification row and exposed as safe metadata. All authentication, ownership, file-signature, MIME, size, content, and private-storage checks remain enforced.
 
 Document analysis always performs local Pillow readability and dimension validation first. The default `DOCUMENT_ANALYSIS_PROVIDER=none` adapter returns `RETRY_REQUIRED`. Setting it to `meta` opts into the Meta Model API adapter, which sends raster documents to the Responses API and validates Muse Spark structured output; PDF image conversion is not implemented. It stores uncertain extracted document type, name, dates, and a private cropped portrait when the model returns valid normalized portrait bounds. Document numbers are never stored raw; the adapter retains only a keyed HMAC fingerprint. Model output is evidence only and does not approve identity. No production liveness or face-matching provider is configured.
 
@@ -104,6 +110,7 @@ Database migrations are managed via Alembic:
 - `0007_selfie_capture`: Adds separate selfie-submission status, consent timestamp, submission timestamp, reason code, and private storage reference.
 - `0010_email_ownership`: Adds authenticated account-email verification challenges and persists a student's selected institution without creating an affiliation.
 - `0011_document_metadata`: Persists model-extracted document type and expiration date.
+- `0012_identity_demo_bypass`: Records whether a document submission used the development-only email-verification bypass.
 
 To inspect migration status:
 

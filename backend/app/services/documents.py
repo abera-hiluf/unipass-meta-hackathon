@@ -63,6 +63,7 @@ async def create_identity_verification(
     upload: UploadFile,
     document_type: str,
     storage: PrivateObjectStorage,
+    email_verification_bypassed: bool = False,
 ) -> IdentityVerification:
     content, extension = await _read_and_validate_upload(upload, document_type)
     object_key = f"documents/{uuid.uuid4().hex}{extension}"
@@ -78,6 +79,7 @@ async def create_identity_verification(
         user_id=user.id,
         document_type=document_type.strip().lower(),
         document_storage_key=object_key,
+        email_verification_bypassed=email_verification_bypassed,
         status="PENDING",
         reason_code="uploaded_pending_processing",
     )

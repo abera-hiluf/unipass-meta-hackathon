@@ -6,6 +6,7 @@ import jwt
 from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
+from app.core.config import settings
 from app.db import get_db
 from app.models.user import User
 from app.repositories import user as user_repo
@@ -57,6 +58,27 @@ def get_email_verified_user(
     current_user: User = Depends(get_current_user),
 ) -> User:
     if not current_user.verified_email or current_user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Verify email ownership before continuing identity verification",
+        )
+    return current_user
+
+
+def has_verified_email(user: User) -> bool:
+    return bool(user.verified_email and user.email_verified_at is not None)
+
+
+def is_identity_demo_user(user: User) -> bool:
+    if not settings.identity_demo_mode or settings.environment.strip().lower() not in {"development", "local"}:
+        return False
+    return user.email == settings.identity_demo_account_email
+
+
+def get_identity_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if not has_verified_email(current_user) and not is_identity_demo_user(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Verify email ownership before continuing identity verification",
