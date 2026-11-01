@@ -1,9 +1,14 @@
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status as http_status
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_identity_user, has_verified_email, is_identity_demo_user
+from app.api.deps import (
+    get_current_user,
+    get_identity_user,
+    has_verified_email,
+    is_identity_demo_enabled,
+)
 from app.db import get_db
 from app.models.identity_verification import IdentityVerification
 from app.models.user import User
@@ -29,20 +34,11 @@ router = APIRouter(prefix="/identity", tags=["Identity Documents"])
 async def upload_identity_document(
     document_type: str = Form(...),
     file: UploadFile = File(...),
-    demo_confirmation_complete: bool = Form(False),
     current_user: User = Depends(get_identity_user),
     db: Session = Depends(get_db),
     storage: PrivateObjectStorage = Depends(get_storage),
 ) -> IdentityVerification:
     email_verification_bypassed = not has_verified_email(current_user)
-    if email_verification_bypassed and (
-        not is_identity_demo_user(current_user)
-        or not demo_confirmation_complete
-    ):
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="Complete the frontend demo email confirmation before uploading with the designated synthetic account",
-        )
     return await create_identity_verification(
         db=db,
         user=current_user,
@@ -202,10 +198,14 @@ def get_identity_face_match(
 def get_identity_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    liveness_adapter: LivenessAdapter = Depends(get_liveness_adapter),
 ) -> dict:
     result = identity_status(db, current_user)
-    result["identity_demo_mode"] = is_identity_demo_user(current_user)
-    result["email_ownership_required"] = not has_verified_email(current_user) and not is_identity_demo_user(current_user)
+    demo_mode = is_identity_demo_enabled()
+    result["identity_demo_mode"] = demo_mode
+    result["email_ownership_required"] = not has_verified_email(current_user) and not demo_mode
+    result["liveness_provider"] = result["liveness_provider"] or liveness_adapter.provider_name
+    result["liveness_provider_available"] = liveness_adapter.available
     return result
 
 

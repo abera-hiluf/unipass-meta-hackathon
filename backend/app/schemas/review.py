@@ -28,3 +28,5 @@ class IdentityStatusResponse(BaseModel):
     selfie_status: str | None
     face_match_status: str | None
     document_analysis_status: str | None
+    liveness_provider: str | None = None
+    liveness_provider_available: bool = False

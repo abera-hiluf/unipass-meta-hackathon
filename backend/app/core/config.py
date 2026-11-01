@@ -44,7 +44,6 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     email_provider: str = "none"
     identity_demo_mode: bool = False
-    identity_demo_account_email: str = "demo@example.com"
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
@@ -72,13 +71,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_identity_demo_mode_outside_development(self) -> "Settings":
-        self.identity_demo_account_email = self.identity_demo_account_email.strip().casefold()
-        if self.identity_demo_mode:
-            if self.environment.strip().lower() not in {"development", "local"}:
-                raise ValueError("IDENTITY_DEMO_MODE may only be enabled in local or development environments")
-            local_part, separator, domain = self.identity_demo_account_email.partition("@")
-            if not local_part or not separator or "@" in local_part or domain != "example.com":
-                raise ValueError("IDENTITY_DEMO_ACCOUNT_EMAIL must use the reserved example.com domain")
+        if self.identity_demo_mode and self.environment.strip().lower() not in {"development", "local"}:
+            raise ValueError("IDENTITY_DEMO_MODE may only be enabled in local or development environments")
         return self
 
 

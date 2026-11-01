@@ -32,17 +32,26 @@ class LivenessAssessment:
 
 
 class LivenessAdapter(Protocol):
+    provider_name: str
+    available: bool
+
     def assess(self, content: bytes, content_type: str, steps: list[str]) -> LivenessAssessment: ...
 
 
 class UnavailableLivenessAdapter:
     """Safe default: no biometric engine is installed or invoked."""
 
+    provider_name = "unavailable"
+    available = False
+
     def assess(self, content: bytes, content_type: str, steps: list[str]) -> LivenessAssessment:
         return LivenessAssessment("REVIEW_REQUIRED", "liveness_provider_not_configured", "unavailable")
 
 
 class MockLivenessAdapter:
+    provider_name = "mock"
+    available = True
+
     def __init__(self, assessment: LivenessAssessment | None = None) -> None:
         self.assessment = assessment or LivenessAssessment("REVIEW_REQUIRED", "synthetic_uncertain", "mock")
 

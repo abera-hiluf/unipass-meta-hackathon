@@ -57,7 +57,8 @@ class MockEmailSender:
 
 
 @pytest.fixture
-def document_context():
+def document_context(monkeypatch):
+    monkeypatch.setattr(settings, "identity_demo_mode", False)
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -119,6 +120,16 @@ def pdf_file(name: str = "passport.pdf", content: bytes = b"%PDF-1.7\n%%EOF") ->
     return (name, content, "application/pdf")
 
 
+def save_demo_contact_email(client: TestClient, token: str, email: str) -> dict:
+    response = client.put(
+        "/api/v1/auth/demo-contact-email",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"email": email},
+    )
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    return response.json()
+
+
 def test_upload_requires_authentication(document_context) -> None:
     client, _, _ = document_context
     response = client.post(
@@ -139,7 +150,7 @@ def test_upload_requires_confirmed_email_ownership(document_context) -> None:
         files={"file": pdf_file()},
     )
     assert response.status_code == status.HTTP_403_FORBIDDEN, response.json()
-    assert response.json()["detail"] == "Verify email ownership before continuing identity verification"
+    assert response.json()["detail"] == "Genuine email ownership verification is required outside local identity demo mode"
     identity_status = client.get(
         "/api/v1/identity/status",
         headers={"Authorization": f"Bearer {token}"},
@@ -148,16 +159,39 @@ def test_upload_requires_confirmed_email_ownership(document_context) -> None:
     assert identity_status.json()["email_ownership_required"] is True
 
 
-def test_demo_mode_allows_only_synthetic_user_and_records_bypass(document_context, monkeypatch) -> None:
+def test_local_demo_saves_contact_email_and_uploads_without_email_verification(document_context, monkeypatch) -> None:
     client, SessionLocal, storage = document_context
     monkeypatch.setattr(settings, "identity_demo_mode", True)
 
-    token = register_and_login(client, "demo@example.com", verify_email=False)
+    token = register_and_login(client, "teshalea000@gmail.com", verify_email=False)
     headers = {"Authorization": f"Bearer {token}"}
+    contact = save_demo_contact_email(client, token, "Student@Gmail.com")
+    assert contact["identity_demo_mode"] is True
+    assert contact["email"] == "student@gmail.com"
+
+    persisted_contact = client.get("/api/v1/auth/demo-contact-email", headers=headers)
+    assert persisted_contact.status_code == status.HTTP_200_OK
+    assert persisted_contact.json()["email"] == "student@gmail.com"
+
+    sender = app.dependency_overrides[get_email_sender]()
+    code_request = client.post(
+        "/api/v1/auth/email-verification/code",
+        headers=headers,
+        json={"email": "student@gmail.com"},
+    )
+    assert code_request.status_code == status.HTTP_409_CONFLICT
+    assert sender.codes == []
+    code_confirmation = client.post(
+        "/api/v1/auth/email-verification/confirm",
+        headers=headers,
+        json={"code": "123456"},
+    )
+    assert code_confirmation.status_code == status.HTTP_409_CONFLICT
+
     uploaded = client.post(
         "/api/v1/identity/documents",
         headers=headers,
-        data={"document_type": "passport", "demo_confirmation_complete": "true"},
+        data={"document_type": "passport"},
         files={"file": pdf_file("demo-passport.pdf")},
     )
 
@@ -169,7 +203,7 @@ def test_demo_mode_allows_only_synthetic_user_and_records_bypass(document_contex
     invalid_document = client.post(
         "/api/v1/identity/documents",
         headers=headers,
-        data={"document_type": "passport", "demo_confirmation_complete": "true"},
+        data={"document_type": "passport"},
         files={"file": ("spoofed-passport.pdf", b"not a PDF", "application/pdf")},
     )
     assert invalid_document.status_code == status.HTTP_400_BAD_REQUEST
@@ -180,25 +214,55 @@ def test_demo_mode_allows_only_synthetic_user_and_records_bypass(document_contex
     )
     assert analysis.status_code == status.HTTP_200_OK
     assert analysis.json()["status"] == "RETRY_REQUIRED"
+    assert analysis.json()["reason_code"] == "analysis_provider_not_configured"
+    assert analysis.json()["source"] == "unavailable"
+    assert analysis.json()["analysis_completed_at"] is not None
 
     email_status = client.get("/api/v1/auth/email-verification", headers=headers)
     selection = client.get("/api/v1/institutions/me/selection", headers=headers)
     identity_status = client.get("/api/v1/identity/status", headers=headers)
     assert email_status.status_code == status.HTTP_200_OK
     assert email_status.json()["verified_email"] is None
+    assert email_status.json()["status"] != "VERIFIED"
     assert selection.status_code == status.HTTP_200_OK
     assert selection.json()["enrollment_status"] == "NOT_VERIFIED"
     assert identity_status.status_code == status.HTTP_200_OK
     assert identity_status.json()["identity_demo_mode"] is True
     assert identity_status.json()["email_ownership_required"] is False
+    assert identity_status.json()["document_analysis_status"] == "RETRY_REQUIRED"
+    assert identity_status.json()["liveness_provider"] == "unavailable"
+    assert identity_status.json()["liveness_provider_available"] is False
 
     with SessionLocal() as db:
         record = db.get(IdentityVerification, uuid.UUID(uploaded.json()["id"]))
         assert record is not None
         assert record.email_verification_bypassed is True
+        account = db.query(User).filter(User.email == "teshalea000@gmail.com").one()
+        assert account.demo_email == "student@gmail.com"
+        assert account.demo_email_confirmed_at is None
+        assert account.verified_email is None
+        assert account.email_verified_at is None
 
 
-def test_demo_mode_does_not_allow_unverified_real_email(document_context, monkeypatch) -> None:
+def test_local_demo_code_endpoint_never_attempts_email_delivery(document_context, monkeypatch) -> None:
+    client, _, _ = document_context
+    monkeypatch.setattr(settings, "identity_demo_mode", True)
+    monkeypatch.setattr(settings, "email_provider", "none")
+    token = register_and_login(client, "real-user@gmail.com", verify_email=False)
+    sender = app.dependency_overrides[get_email_sender]()
+
+    response = client.post(
+        "/api/v1/auth/email-verification/code",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"email": "contact@gmail.com"},
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert "disabled in local identity demo mode" in response.json()["detail"]
+    assert sender.codes == []
+
+
+def test_local_demo_mode_applies_to_authenticated_users_without_email_confirmation(document_context, monkeypatch) -> None:
     client, _, _ = document_context
     monkeypatch.setattr(settings, "identity_demo_mode", True)
     token = register_and_login(client, "real-user@gmail.com", verify_email=False)
@@ -211,60 +275,126 @@ def test_demo_mode_does_not_allow_unverified_real_email(document_context, monkey
     )
 
     assert "authorization" in response.request.headers
-    assert response.status_code == status.HTTP_403_FORBIDDEN, response.json()
+    assert response.status_code == status.HTTP_201_CREATED, response.json()
+    assert response.json()["email_verification_bypassed"] is True
 
 
-def test_demo_mode_does_not_allow_unlisted_example_account(document_context, monkeypatch) -> None:
+def test_local_demo_can_submit_selfie_and_liveness_without_email_verification(document_context, monkeypatch) -> None:
     client, _, _ = document_context
     monkeypatch.setattr(settings, "identity_demo_mode", True)
-    token = register_and_login(client, "other-student@example.com", verify_email=False)
+    token = register_and_login(client, "biometric-demo@example.com", verify_email=False)
+    headers = {"Authorization": f"Bearer {token}"}
 
-    response = client.post(
+    upload = client.post(
         "/api/v1/identity/documents",
-        headers={"Authorization": "Bearer " + token},
+        headers=headers,
         data={"document_type": "passport"},
         files={"file": pdf_file()},
     )
+    verification_id = upload.json()["id"]
+    selfie = client.post(
+        f"/api/v1/identity/verifications/{verification_id}/selfie",
+        headers=headers,
+        data={"consent": "true", "capture_state": "captured"},
+        files={"file": ("selfie.png", png_bytes(), "image/png")},
+    )
+    challenge = client.post(
+        f"/api/v1/identity/verifications/{verification_id}/liveness/challenge",
+        headers=headers,
+    )
+    liveness = client.post(
+        f"/api/v1/identity/verifications/{verification_id}/liveness",
+        headers=headers,
+        data={
+            "challenge_id": challenge.json()["challenge_id"],
+            "consent": "true",
+            "capture_state": "completed_challenge",
+        },
+        files={"file": ("capture.webm", b"\x1a\x45\xdf\xa3", "video/webm")},
+    )
+    face_match = client.post(
+        f"/api/v1/identity/verifications/{verification_id}/face-match",
+        headers=headers,
+    )
+    current_status = client.get("/api/v1/identity/status", headers=headers)
 
-    assert "authorization" in response.request.headers
+    assert upload.status_code == status.HTTP_201_CREATED
+    assert selfie.status_code == status.HTTP_201_CREATED
+    assert challenge.status_code == status.HTTP_200_OK
+    assert liveness.status_code == status.HTTP_200_OK
+    assert liveness.json()["liveness_status"] == "REVIEW_REQUIRED"
+    assert liveness.json()["provider"] == "unavailable"
+    assert face_match.status_code == status.HTTP_409_CONFLICT
+    assert face_match.json()["detail"] == "Document portrait is not available"
+    assert current_status.json()["liveness_status"] == "REVIEW_REQUIRED"
+    assert current_status.json()["email_ownership_required"] is False
+    assert current_status.json()["liveness_provider_available"] is False
+
+
+def test_demo_contact_email_requires_auth_and_persists_without_confirmation(document_context, monkeypatch) -> None:
+    client, SessionLocal, _ = document_context
+    monkeypatch.setattr(settings, "identity_demo_mode", True)
+    token = register_and_login(client, "contact-owner@example.com", verify_email=False)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    unauthenticated = client.put(
+        "/api/v1/auth/demo-contact-email",
+        json={"email": "student@gmail.com"},
+    )
+    saved = save_demo_contact_email(client, token, "student@gmail.com")
+
+    assert unauthenticated.status_code == status.HTTP_401_UNAUTHORIZED
+    assert saved["email"] == "student@gmail.com"
+    assert saved["identity_demo_mode"] is True
+    with SessionLocal() as db:
+        assert db.query(IdentityVerification).count() == 0
+        demo_user = db.query(User).filter(User.email == "contact-owner@example.com").one()
+        assert demo_user.demo_email == "student@gmail.com"
+        assert demo_user.demo_email_confirmed_at is None
+        assert demo_user.verified_email is None
+        assert demo_user.email_verified_at is None
+
+
+def test_demo_contact_email_is_disabled_when_demo_mode_is_off(document_context) -> None:
+    client, _, _ = document_context
+    token = register_and_login(client, "normal-user@example.com", verify_email=False)
+
+    response = client.put(
+        "/api/v1/auth/demo-contact-email",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"email": "contact@gmail.com"},
+    )
+
     assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
-def test_demo_mode_requires_frontend_confirmation_for_designated_account(document_context, monkeypatch) -> None:
-    client, SessionLocal, _ = document_context
-    monkeypatch.setattr(settings, "identity_demo_mode", True)
-    token = register_and_login(client, "demo@example.com", verify_email=False)
-    headers = {"Authorization": f"Bearer {token}"}
+def test_local_frontend_can_preflight_demo_contact_email_update(document_context) -> None:
+    client, _, _ = document_context
 
-    missing_confirmation = client.post(
-        "/api/v1/identity/documents",
-        headers=headers,
-        data={"document_type": "passport"},
-        files={"file": pdf_file()},
-    )
-    mismatched_confirmation = client.post(
-        "/api/v1/identity/documents",
-        headers=headers,
-        data={"document_type": "passport", "demo_confirmation_complete": "false"},
-        files={"file": pdf_file()},
+    response = client.options(
+        "/api/v1/auth/demo-contact-email",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "PUT",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
     )
 
-    assert missing_confirmation.status_code == status.HTTP_403_FORBIDDEN
-    assert mismatched_confirmation.status_code == status.HTTP_403_FORBIDDEN
-    with SessionLocal() as db:
-        assert db.query(IdentityVerification).count() == 0
+    assert response.status_code == status.HTTP_200_OK
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "PUT" in response.headers["access-control-allow-methods"]
 
 
 def test_demo_mode_still_enforces_default_five_megabyte_limit(document_context, monkeypatch) -> None:
     client, _, storage = document_context
     monkeypatch.setattr(settings, "identity_demo_mode", True)
-    token = register_and_login(client, "demo@example.com", verify_email=False)
+    token = register_and_login(client, "demo-mode-user@gmail.com", verify_email=False)
 
     oversized_content = b"%PDF-1.7\n" + b"x" * (5 * 1024 * 1024) + b"\n%%EOF"
     response = client.post(
         "/api/v1/identity/documents",
         headers={"Authorization": f"Bearer {token}"},
-        data={"document_type": "passport", "demo_confirmation_complete": "true"},
+        data={"document_type": "passport"},
         files={"file": pdf_file("large.pdf", oversized_content)},
     )
 
@@ -277,7 +407,7 @@ def test_demo_identity_flow_completes_upload_analysis_and_step_three_prerequisit
 ) -> None:
     client, SessionLocal, _ = document_context
     monkeypatch.setattr(settings, "identity_demo_mode", True)
-    token = register_and_login(client, "demo@example.com", verify_email=False)
+    token = register_and_login(client, "demo-flow-user@gmail.com", verify_email=False)
     headers = {"Authorization": f"Bearer {token}"}
 
     with SessionLocal() as db:
@@ -303,7 +433,7 @@ def test_demo_identity_flow_completes_upload_analysis_and_step_three_prerequisit
     upload = client.post(
         "/api/v1/identity/documents",
         headers=headers,
-        data={"document_type": "passport", "demo_confirmation_complete": "true"},
+        data={"document_type": "passport"},
         files={"file": pdf_file("demo-flow.pdf")},
     )
     assert upload.status_code == status.HTTP_201_CREATED

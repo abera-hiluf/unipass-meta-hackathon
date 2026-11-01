@@ -42,6 +42,8 @@ class User(Base):
     )
     verified_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    demo_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    demo_email_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     selected_institution_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True
     )

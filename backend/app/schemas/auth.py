@@ -76,6 +76,22 @@ class EmailOwnershipConfirmRequest(BaseModel):
     code: str = Field(..., pattern=r"^[0-9]{6}$")
 
 
+class DemoContactEmailRequest(BaseModel):
+    email: EmailStr
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email_input(cls, value: str) -> str:
+        if isinstance(value, str):
+            return value.strip().casefold()
+        return value
+
+
+class DemoContactEmailResponse(BaseModel):
+    identity_demo_mode: bool
+    email: EmailStr | None
+
+
 class EmailOwnershipStatusResponse(BaseModel):
     status: str
     email: EmailStr | None

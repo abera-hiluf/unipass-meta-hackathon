@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1.auth import get_email_sender
+from app.core.config import settings
 from app.db import Base, get_db
 from app.main import app
 from app.models.email_ownership_challenge import EmailOwnershipChallenge
@@ -32,7 +33,8 @@ class MockEmailSender:
 
 
 @pytest.fixture
-def email_context():
+def email_context(monkeypatch):
+    monkeypatch.setattr(settings, "identity_demo_mode", False)
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},

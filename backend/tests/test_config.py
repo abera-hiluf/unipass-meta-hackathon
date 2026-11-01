@@ -27,7 +27,6 @@ def test_identity_demo_mode_is_disabled_by_default() -> None:
     )
 
     assert configured.identity_demo_mode is False
-    assert configured.identity_demo_account_email == "demo@example.com"
 
 
 @pytest.mark.parametrize("environment", ["production", "staging", "test"])
@@ -51,13 +50,3 @@ def test_identity_demo_mode_is_allowed_only_in_local_development(environment: st
     )
 
     assert configured.identity_demo_mode is True
-
-
-def test_identity_demo_account_must_use_reserved_domain() -> None:
-    with pytest.raises(ValueError, match="IDENTITY_DEMO_ACCOUNT_EMAIL must use the reserved"):
-        Settings(
-            _env_file=None,
-            JWT_SECRET_KEY="unit-test-only-jwt-secret-with-32-plus-bytes",
-            identity_demo_mode=True,
-            identity_demo_account_email="demo@gmail.com",
-        )

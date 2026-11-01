@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, is_identity_demo_enabled
 from app.db import get_db
-from app.models.user import User
+from app.models.user import User, normalize_email
 from app.schemas.auth import (
+    DemoContactEmailRequest,
+    DemoContactEmailResponse,
     EmailOwnershipCodeRequest,
     EmailOwnershipConfirmRequest,
     EmailOwnershipStatusResponse,
@@ -75,7 +77,36 @@ def get_email_verification_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return email_ownership_status(db, current_user)
+    return _email_status_response(db, current_user)
+
+
+@router.get("/demo-contact-email", response_model=DemoContactEmailResponse)
+def get_demo_contact_email(
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str | bool | None]:
+    if not is_identity_demo_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo contact email is available only in local identity demo mode",
+        )
+    return {"identity_demo_mode": True, "email": current_user.demo_email}
+
+
+@router.put("/demo-contact-email", response_model=DemoContactEmailResponse)
+def save_demo_contact_email(
+    payload: DemoContactEmailRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str | bool | None]:
+    if not is_identity_demo_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo contact email is available only in local identity demo mode",
+        )
+    current_user.demo_email = normalize_email(str(payload.email))
+    current_user.demo_email_confirmed_at = None
+    db.commit()
+    return {"identity_demo_mode": True, "email": current_user.demo_email}
 
 
 @router.post("/email-verification/code", response_model=EmailOwnershipStatusResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -85,7 +116,13 @@ def issue_email_verification_code(
     db: Session = Depends(get_db),
     sender: EmailSender = Depends(get_email_sender),
 ) -> dict:
-    return send_email_ownership_code(db, current_user, str(payload.email), sender)
+    if is_identity_demo_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email verification codes are disabled in local identity demo mode",
+        )
+    response = send_email_ownership_code(db, current_user, str(payload.email), sender)
+    return _email_status_response(db, current_user, response)
 
 
 @router.post("/email-verification/confirm", response_model=EmailOwnershipStatusResponse)
@@ -94,4 +131,14 @@ def confirm_email_verification_code(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return confirm_email_ownership_code(db, current_user, payload.code)
+    if is_identity_demo_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email verification codes are disabled in local identity demo mode",
+        )
+    response = confirm_email_ownership_code(db, current_user, payload.code)
+    return _email_status_response(db, current_user, response)
+
+
+def _email_status_response(db: Session, user: User, response: dict | None = None) -> dict:
+    return response or email_ownership_status(db, user)
