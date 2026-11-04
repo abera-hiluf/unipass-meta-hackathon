@@ -23,7 +23,9 @@ import {
 } from '../services/api/institutions'
 import {
   confirmEmailOwnershipCode,
+  demoContactEmail as fetchDemoContactEmail,
   emailOwnershipStatus as fetchEmailOwnershipStatus,
+  saveDemoContactEmail as persistDemoContactEmail,
   sendEmailOwnershipCode,
 } from '../services/api/auth'
 import { useAuth } from '../context/AuthContext'
@@ -82,13 +84,6 @@ function statusLabel(value, fallback = 'Not started') {
   if (!value) return fallback
   const normalized = String(value).toUpperCase()
   return STATUS_LABELS[normalized] || normalized.toLowerCase().replaceAll('_', ' ')
-}
-
-function isDocumentAnalysisComplete(result) {
-  return Boolean(
-    result?.analysis_completed_at
-    && ['COMPLETED', 'FLAGGED'].includes(String(result.status || '').toUpperCase()),
-  )
 }
 
 function getStepValue(key) {
@@ -166,8 +161,6 @@ export function Identity() {
     step: `${storagePrefix}_step`,
     verification: `${storagePrefix}_verification`,
     challenge: `${storagePrefix}_challenge`,
-    demoEmail: `${storagePrefix}_demo_email`,
-    demoEmailConfirmation: `${storagePrefix}_demo_email_confirmation`,
   }), [storagePrefix])
 
   const [step, setStep] = useState(1)
@@ -180,7 +173,6 @@ export function Identity() {
   const [savedInstitutionId, setSavedInstitutionId] = useState('')
   const [email, setEmail] = useState(user?.email || '')
   const [verificationCode, setVerificationCode] = useState('')
-  const [confirmedDemoEmail, setConfirmedDemoEmail] = useState('')
   const [documentType, setDocumentType] = useState('passport')
   const [file, setFile] = useState(null)
   const [documentAnalysisStatus, setDocumentAnalysisStatus] = useState(null)
@@ -226,23 +218,33 @@ export function Identity() {
 
   async function refresh() {
     try {
-      const [identityResponse, institutionsResponse, selectionResponse, emailResponse] = await Promise.all([
+      const [identityResponse, institutionsResponse, selectionResponse] = await Promise.all([
         identityStatus(),
         listInstitutions(),
         myInstitutionSelection(),
-        fetchEmailOwnershipStatus(),
       ])
       const latestStatus = identityResponse.data
       const latestVerificationId = latestStatus.verification_id || ''
+      const emailResponse = latestStatus.identity_demo_mode
+        ? await fetchDemoContactEmail()
+        : await fetchEmailOwnershipStatus()
+      const emailData = latestStatus.identity_demo_mode
+        ? {
+          identity_demo_mode: true,
+          demo_email: emailResponse.data.email,
+          email: emailResponse.data.email,
+        }
+        : { ...emailResponse.data, identity_demo_mode: false }
       let detailError = ''
       setStatus(latestStatus)
-      if (latestStatus.email_ownership_required) setStep(1)
-      setEmailOwnership(emailResponse.data)
-      if (emailResponse.data.status === 'VERIFIED') {
-        setEmail(emailResponse.data.verified_email || emailResponse.data.email || '')
-      } else if (['CODE_SENT', 'CODE_EXPIRED', 'INVALID_CODE'].includes(emailResponse.data.status) && emailResponse.data.email) {
-        setEmail(emailResponse.data.email)
-      }
+      setEmailOwnership(emailData)
+      const emailStepIsComplete = latestStatus.identity_demo_mode
+        ? Boolean(emailData.demo_email)
+        : emailData.status === 'VERIFIED'
+      if (latestStatus.email_ownership_required || !emailStepIsComplete) setStep(1)
+      setEmail(latestStatus.identity_demo_mode
+        ? emailData.demo_email || user?.email || ''
+        : emailData.verified_email || emailData.email || user?.email || '')
       setInstitutions(institutionsResponse.data)
       setVerificationId(latestVerificationId)
       setDocumentAnalysisStatus(latestStatus.document_analysis_status)
@@ -286,8 +288,7 @@ export function Identity() {
   useEffect(() => {
     if (!user?.id) return
     setStep(getStepValue(keys.step))
-    setEmail(sessionStorage.getItem(keys.demoEmail) || user.email || '')
-    setConfirmedDemoEmail(sessionStorage.getItem(keys.demoEmailConfirmation) || '')
+    setEmail(user.email || '')
     setStorageReady(true)
     refresh()
   }, [user?.id])
@@ -451,7 +452,7 @@ export function Identity() {
       setError('Please enter a valid email address.')
       return
     }
-    if (!emailIsVerified && !(status?.identity_demo_mode && demoIsConfirmed)) {
+    if (!identityDemoMode && !emailIsVerified) {
       setError('Verify ownership of this email address before continuing.')
       return
     }
@@ -462,6 +463,19 @@ export function Identity() {
       setError('Please select and save an institution.')
       return
     }
+    if (identityDemoMode && !demoContactEmailSaved) {
+      await perform(async () => {
+        const response = await persistDemoContactEmail(email.trim())
+        setEmailOwnership({
+          identity_demo_mode: true,
+          demo_email: response.data.email,
+          email: response.data.email,
+        })
+        setMessage('Email address saved.')
+        setStep(2)
+      })
+      return
+    }
     setError('')
     setStep(2)
   }
@@ -469,26 +483,8 @@ export function Identity() {
   function updateEmail(value) {
     setEmail(value)
     setVerificationCode('')
-    if (status?.identity_demo_mode) {
-      setConfirmedDemoEmail('')
-      sessionStorage.setItem(keys.demoEmail, value)
-      sessionStorage.removeItem(keys.demoEmailConfirmation)
-    }
     setError('')
     setMessage('')
-  }
-
-  function confirmEmailForDemo() {
-    if (!emailIsValid) {
-      setError('Please enter a valid email address.')
-      return
-    }
-    const normalizedEmail = email.trim().toLowerCase()
-    sessionStorage.setItem(keys.demoEmail, email)
-    sessionStorage.setItem(keys.demoEmailConfirmation, normalizedEmail)
-    setConfirmedDemoEmail(normalizedEmail)
-    setError('')
-    setMessage('Demo confirmation successful. No email was sent; email ownership has not been verified.')
   }
 
   async function sendEmailVerificationCode() {
@@ -503,12 +499,7 @@ export function Identity() {
       setMessage(response.data.status === 'VERIFIED'
         ? `Email ownership is already verified for ${response.data.verified_email || response.data.email}.`
         : `A verification code was sent to ${response.data.email}. Check your inbox and spam folder.`)
-    }, (err) => {
-      if (err.response?.status === 503) {
-        return 'Email delivery is unavailable. The service administrator must configure or restore the email provider before a verification code can be sent.'
-      }
-      return apiMessage(err)
-    })
+    }, apiMessage)
   }
 
   async function verifyEmailCode() {
@@ -539,7 +530,7 @@ export function Identity() {
   }
 
   async function uploadAndAnalyzeDocument() {
-    if (!emailReady) {
+    if (!identityDemoMode && !emailIsVerified) {
       setError('Verify email ownership before uploading an identity document.')
       return
     }
@@ -554,9 +545,13 @@ export function Identity() {
     setUploadProgress({ label: 'Uploading document', value: 0 })
     let uploadedVerificationId = ''
     try {
-      const uploadResponse = await uploadDocument(documentType, file, demoIsConfirmed, (event) => {
-        if (event.total) setUploadProgress({ label: 'Uploading document', value: Math.round(event.loaded * 100 / event.total) })
-      })
+      const uploadResponse = await uploadDocument(
+        documentType,
+        file,
+        (event) => {
+          if (event.total) setUploadProgress({ label: 'Uploading document', value: Math.round(event.loaded * 100 / event.total) })
+        },
+      )
       uploadedVerificationId = uploadResponse.data.id
       setVerificationId(uploadedVerificationId)
       sessionStorage.setItem(keys.verification, uploadedVerificationId)
@@ -572,10 +567,11 @@ export function Identity() {
         setDocumentStatusDetails((current) => ({ ...current, ...analysisResponse.data }))
         setMessage(`Document analysis status returned by the backend: ${statusLabel(analysisResponse.data.status)}.`)
         await refresh()
-        if (isDocumentAnalysisComplete(analysisResponse.data)) setStep(3)
+        setStep(3)
       } catch (analysisError) {
         await refresh()
         setError(`Document uploaded successfully, but analysis could not be completed: ${apiMessage(analysisError)}`)
+        setStep(3)
       }
     } catch (uploadError) {
       setError(apiMessage(uploadError))
@@ -711,26 +707,26 @@ export function Identity() {
 
   const selectedInstitution = institutions.find((institution) => institution.id === institutionId)
   const normalizedEmail = email.trim().toLowerCase()
-  const demoIsConfirmed = Boolean(
-    normalizedEmail
-    && confirmedDemoEmail
-    && normalizedEmail === confirmedDemoEmail.toLowerCase(),
+  const identityDemoMode = Boolean(status?.identity_demo_mode)
+  const demoContactEmailSaved = Boolean(
+    identityDemoMode
+    && normalizedEmail
+    && normalizedEmail === String(emailOwnership?.demo_email || '').toLowerCase(),
   )
   const emailIsVerified = Boolean(
     emailOwnership?.status === 'VERIFIED'
     && String(emailOwnership.verified_email || '').toLowerCase() === normalizedEmail,
   )
-  const emailReady = emailIsVerified || Boolean(status?.identity_demo_mode && demoIsConfirmed)
-  const emailStatus = emailIsVerified
-    ? 'VERIFIED'
-    : status?.identity_demo_mode && demoIsConfirmed
-      ? 'DEMO_CONFIRMED'
+  const emailStatus = identityDemoMode
+    ? demoContactEmailSaved ? 'SAVED' : 'NOT_SAVED'
+    : emailIsVerified
+      ? 'VERIFIED'
       : String(emailOwnership?.email || '').toLowerCase() === normalizedEmail
         ? emailOwnership?.status || 'NOT_VERIFIED'
         : 'NOT_VERIFIED'
   const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
   const hasActiveEmailChallenge = Boolean(
-    !status?.identity_demo_mode
+    !emailOwnership?.identity_demo_mode
     && !emailIsVerified
     && ['CODE_SENT', 'INVALID_CODE'].includes(emailOwnership?.status)
     && String(emailOwnership.email || '').toLowerCase() === normalizedEmail,
@@ -740,11 +736,7 @@ export function Identity() {
     ? Math.max(0, Math.ceil((resendAvailableAt - now) / 1000))
     : 0
   const backendBlocksUnverifiedEmail = Boolean(status?.email_ownership_required)
-  const documentStepComplete = Boolean(
-    verificationId
-    && documentStatusDetails?.analysis_completed_at
-    && ['COMPLETED', 'FLAGGED'].includes(String(documentStatusDetails?.status || '').toUpperCase()),
-  )
+  const documentUploaded = Boolean(verificationId)
   const currentDocumentAnalysisStatus = (
     documentAnalysisStatus
     || documentStatusDetails?.status
@@ -814,14 +806,18 @@ export function Identity() {
               {step === 1 && (
                 <section aria-labelledby="institution-heading">
                   <h2 id="institution-heading" className="text-xl font-bold text-ink">Email and institution</h2>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Verify that you own an email address before continuing. Email ownership is separate from institutional enrollment.</p>
-                  {status?.identity_demo_mode && (
-                    <p className="mt-3 rounded-xl bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-                      This designated synthetic account is in local demo mode. Demo confirmation does not send email or verify ownership; uploads remain reviewable and do not establish identity or enrollment.
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                    {identityDemoMode
+                    ? 'Enter the contact email to associate with this demo.'
+                    : 'Verify that you own an email address before continuing. Email ownership is separate from institutional enrollment.'}
+                  </p>
+                  {identityDemoMode && (
+                    <p id="demo-email-notice" className="mt-2 text-xs leading-5 text-amber-800">
+                    For this demonstration, email ownership verification is not required.
                     </p>
                   )}
                   <label className="mt-6 block text-sm font-semibold text-ink" htmlFor="identity-email">
-                    Email address to verify <span aria-hidden="true" className="text-red-600">*</span>
+                    {identityDemoMode ? 'Email address' : 'Email address to verify'} <span aria-hidden="true" className="text-red-600">*</span>
                   </label>
                   <input
                     id="identity-email"
@@ -831,71 +827,60 @@ export function Identity() {
                     onChange={(event) => updateEmail(event.target.value)}
                     autoComplete="email"
                     className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-3"
-                    aria-describedby="email-verification-note"
+                    aria-describedby={identityDemoMode ? 'demo-email-notice' : 'email-verification-note'}
                   />
-                  <div className="mt-3 flex flex-wrap items-center gap-3">
-                    <StatusBadge
-                      value={emailStatus}
-                      label={statusLabel(emailStatus)}
-                    />
-                    {status?.identity_demo_mode ? (
-                      <Button type="button" variant="secondary" onClick={confirmEmailForDemo} disabled={busy || !emailIsValid}>
-                        Confirm for demo
-                      </Button>
-                    ) : !emailIsVerified ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={sendEmailVerificationCode}
-                        disabled={busy || !emailIsValid || resendWaitSeconds > 0}
-                      >
-                        {busy
-                          ? 'Sending…'
-                          : emailOwnership?.status === 'CODE_SENT' && String(emailOwnership.email || '').toLowerCase() === normalizedEmail
-                            ? 'Resend code'
-                            : 'Send verification code'}
-                      </Button>
-                    ) : null}
-                  </div>
-                  {status?.identity_demo_mode ? (
-                    <p id="email-verification-note" className="mt-3 text-sm leading-6 text-slate-600">
-                      {demoIsConfirmed
-                        ? 'Demo confirmation recorded locally. No email was sent and email ownership remains unverified.'
-                        : 'Confirm this demo step to continue with the designated synthetic account.'}
-                    </p>
-                  ) : (
-                    <div id="email-verification-note" className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
-                      {emailIsVerified ? (
-                        <p>Email ownership is verified for {emailOwnership.verified_email}.</p>
-                      ) : (
-                        <p>We will email a single-use six-digit code to this address. The code expires after 10 minutes.</p>
-                      )}
-                      {resendWaitSeconds > 0 && !emailIsVerified && (
-                        <p role="status">You can request another code in {resendWaitSeconds} seconds.</p>
-                      )}
-                      {hasActiveEmailChallenge && (
-                        <div>
-                          <label className="block font-semibold text-ink" htmlFor="email-verification-code">Verification code</label>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <input
-                              id="email-verification-code"
-                              type="text"
-                              inputMode="numeric"
-                              autoComplete="one-time-code"
-                              pattern="[0-9]{6}"
-                              maxLength={6}
-                              value={verificationCode}
-                              onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                              className="w-full max-w-xs rounded-xl border border-slate-200 px-3 py-3"
-                              aria-label="Six-digit email verification code"
-                            />
-                            <Button type="button" onClick={verifyEmailCode} disabled={busy || verificationCode.length !== 6}>
-                              {busy ? 'Verifying…' : 'Verify email'}
-                            </Button>
+                  {!identityDemoMode && (
+                    <>
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <StatusBadge value={emailStatus} label={statusLabel(emailStatus)} />
+                        {!emailIsVerified && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={sendEmailVerificationCode}
+                            disabled={busy || !emailIsValid || resendWaitSeconds > 0}
+                          >
+                            {busy
+                              ? 'Sending…'
+                              : emailOwnership?.status === 'CODE_SENT' && String(emailOwnership.email || '').toLowerCase() === normalizedEmail
+                                ? 'Resend code'
+                                : 'Send verification code'}
+                          </Button>
+                        )}
+                      </div>
+                      <div id="email-verification-note" className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
+                        {emailIsVerified ? (
+                          <p>Email ownership is verified for {emailOwnership.verified_email}.</p>
+                        ) : (
+                          <p>We will email a single-use six-digit code to this address. The code expires after 10 minutes.</p>
+                        )}
+                        {resendWaitSeconds > 0 && !emailIsVerified && (
+                          <p role="status">You can request another code in {resendWaitSeconds} seconds.</p>
+                        )}
+                        {hasActiveEmailChallenge && (
+                          <div>
+                            <label className="block font-semibold text-ink" htmlFor="email-verification-code">Verification code</label>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <input
+                                id="email-verification-code"
+                                type="text"
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                pattern="[0-9]{6}"
+                                maxLength={6}
+                                value={verificationCode}
+                                onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                                className="w-full max-w-xs rounded-xl border border-slate-200 px-3 py-3"
+                                aria-label="Six-digit email verification code"
+                              />
+                              <Button type="button" onClick={verifyEmailCode} disabled={busy || verificationCode.length !== 6}>
+                                {busy ? 'Verifying…' : 'Verify email'}
+                              </Button>
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    </>
                   )}
                   <label className="mt-6 block text-sm font-semibold text-ink" htmlFor="institution-select">Institution <span aria-hidden="true" className="text-red-600">*</span></label>
                   <select
@@ -927,14 +912,9 @@ export function Identity() {
                 <section aria-labelledby="document-heading">
                   <h2 id="document-heading" className="text-xl font-bold text-ink">Identity document</h2>
                   <p className="mt-2 text-sm leading-6 text-slate-600">Supported formats are PDF, JPEG, and PNG. Maximum size: 5 MB. The backend validates file contents and analysis status.</p>
-                  {status?.identity_demo_mode && (
-                    <p className="mt-3 rounded-xl bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-                      Demo mode: email ownership has not been verified. This designated synthetic account may upload after completing the demo email-confirmation step. Uploads remain pending/reviewable and do not verify enrollment or identity.
-                    </p>
-                  )}
                   {backendBlocksUnverifiedEmail && (
                     <p className="mt-3 rounded-xl bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-                      Verify email ownership before continuing identity verification. The backend requires genuine email verification for this account.
+                      Genuine email ownership verification is required outside local identity demo mode.
                     </p>
                   )}
                   {verificationId && (
@@ -942,7 +922,6 @@ export function Identity() {
                       <p className="font-semibold text-ink">Current document response</p>
                       <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
                         <StatusRow label="Document type" value={documentStatusDetails?.document_type || documentType} />
-                        <StatusRow label="Email verification bypass" value={documentStatusDetails?.email_verification_bypassed ? 'DEMO_BYPASS_RECORDED' : 'NOT_USED'} />
                         <StatusRow label="Extracted document type" value={documentStatusDetails?.extracted_document_type || 'NOT_STARTED'} />
                         <StatusRow label="Analysis status" value={currentDocumentAnalysisStatus || 'NOT_STARTED'} />
                         <StatusRow label="Analysis source" value={documentStatusDetails?.analysis_source || documentStatusDetails?.source || 'NOT_STARTED'} />
@@ -973,7 +952,7 @@ export function Identity() {
                     <Button variant="secondary" onClick={() => documentFileRef.current?.click()} disabled={busy}>
                       Choose Document
                     </Button>
-                    <Button onClick={uploadAndAnalyzeDocument} disabled={busy || !file || !emailReady}>
+                    <Button onClick={uploadAndAnalyzeDocument} disabled={busy || !file}>
                       {busy ? <LoaderCircle size={16} className="mr-2 inline animate-spin" /> : <Upload size={16} className="mr-2 inline" />}
                       Upload and Analyze
                     </Button>
@@ -995,7 +974,7 @@ export function Identity() {
                   )}
                   {verificationId && ['PROCESSING', 'RETRY_REQUIRED', 'FAILED'].includes(String(currentDocumentAnalysisStatus || '').toUpperCase()) && (
                     <p className="mt-3 text-sm leading-6 text-slate-600" role="status">
-                      Backend analysis status: {statusLabel(currentDocumentAnalysisStatus)}. The next step stays unavailable until analysis is completed or flagged for review.
+                      Backend analysis status: {statusLabel(currentDocumentAnalysisStatus)}. You can continue to selfie capture; this status is not a successful analysis result.
                     </p>
                   )}
                 </section>
@@ -1043,7 +1022,10 @@ export function Identity() {
               {step === 4 && (
                 <section aria-labelledby="liveness-heading">
                   <h2 id="liveness-heading" className="text-xl font-bold text-ink">Liveness challenge</h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">A real challenge can be issued and submitted through the existing API. The configured backend provider is unavailable, so a submitted recording will not produce a genuine LIVE result.</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Provider: {status?.liveness_provider || 'unknown'} · Availability: {status?.liveness_provider_available ? 'available' : 'unavailable'}.
+                    The result below reflects the backend assessment; a challenge by itself is not a liveness result.
+                  </p>
                   <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
                     Challenge issuance or video submission is not proof of liveness. If submitted without a provider, expect the backend to return Review required.
                   </div>
@@ -1094,7 +1076,7 @@ export function Identity() {
                       )}
                       <label className="mt-5 flex items-start gap-3 text-sm leading-6 text-slate-700">
                         <input type="checkbox" checked={livenessConsent} onChange={(event) => setLivenessConsent(event.target.checked)} className="mt-1 h-4 w-4" />
-                        I consent to submitting this liveness recording for assessment. I understand the provider is unavailable and the result may require review.
+                        I consent to submitting this liveness recording for assessment. The provider availability and returned result are shown by the backend.
                       </label>
                       <Button className="mt-4" onClick={submitLivenessCapture} disabled={!livenessCapture || !livenessConsent || busy}>
                         {busy ? <LoaderCircle size={16} className="mr-2 inline animate-spin" /> : <Video size={16} className="mr-2 inline" />}
@@ -1119,12 +1101,13 @@ export function Identity() {
                   <dl className="mt-6 divide-y divide-slate-100">
                     <StatusRow label="Account" value={user ? 'REGISTERED' : 'NOT_STARTED'} />
                     <StatusRow label="Institution selection" value={selectedInstitution && savedInstitutionId === institutionId ? 'SELECTED' : 'NOT_SELECTED'} />
-                    <StatusRow label="Email ownership" value={emailStatus} />
+                    <StatusRow label={identityDemoMode ? 'Contact email' : 'Email ownership'} value={emailStatus} />
                     <StatusRow label="Institution enrollment" value={enrollmentStatus} />
                     <StatusRow label="Document analysis" value={status?.document_analysis_status || documentAnalysisStatus || missingStatus} />
                     <StatusRow label="Selfie capture" value={status?.selfie_status || (status ? 'NOT_SUBMITTED' : missingStatus)} />
                     <StatusRow label="Liveness" value={status?.liveness_status || missingStatus} />
-                    <StatusRow label="Liveness provider" value="PROVIDER_UNAVAILABLE" />
+                    <StatusRow label="Liveness provider" value={status?.liveness_provider || 'NOT_RUN'} />
+                    <StatusRow label="Liveness provider availability" value={status?.liveness_provider_available === undefined ? 'UNKNOWN' : status.liveness_provider_available ? 'AVAILABLE' : 'UNAVAILABLE'} />
                     <StatusRow label="Face match" value={status?.face_match_status || missingStatus} />
                     <StatusRow label="Overall identity verification" value={status?.outcome || (error ? 'UNAVAILABLE' : 'PENDING')} />
                   </dl>
@@ -1145,23 +1128,17 @@ export function Identity() {
                 )}
               </div>
               {step === 1 && (
-                <Button type="button" className="w-full sm:w-auto" onClick={handleInstitutionNext} disabled={loading || busy || !emailIsValid || !emailReady || !institutionId || savedInstitutionId !== institutionId}>
-                  Next: Identity Document <ArrowRight size={16} className="ml-2 inline" />
+                <Button type="button" className="w-full sm:w-auto" onClick={handleInstitutionNext} disabled={loading || busy || !emailIsValid || (!identityDemoMode && !emailIsVerified) || !institutionId || savedInstitutionId !== institutionId}>
+                  {identityDemoMode ? 'Save and Continue' : 'Next: Identity Document'} <ArrowRight size={16} className="ml-2 inline" />
                 </Button>
               )}
               {step === 2 && (
                 <div className="flex flex-col items-start gap-2 sm:items-end">
-                  <Button className="w-full sm:w-auto" onClick={() => setStep(3)} disabled={busy || !documentStepComplete}>
+                  <Button className="w-full sm:w-auto" onClick={() => setStep(3)} disabled={busy || !documentUploaded}>
                     Next: Selfie Capture <ArrowRight size={16} className="ml-2 inline" />
                   </Button>
-                  {!verificationId ? (
+                  {!documentUploaded ? (
                     <p className="text-sm text-slate-500">Upload the identity document first to continue.</p>
-                  ) : !documentStepComplete ? (
-                    <p className="text-sm text-slate-500">
-                      {['RETRY_REQUIRED', 'FAILED'].includes(String(currentDocumentAnalysisStatus || '').toUpperCase())
-                        ? 'Document analysis needs attention. Retry analysis or upload a replacement document before continuing.'
-                        : `Document analysis status: ${statusLabel(currentDocumentAnalysisStatus || 'PENDING')}. Wait for a completed backend result before continuing.`}
-                    </p>
                   ) : null}
                 </div>
               )}

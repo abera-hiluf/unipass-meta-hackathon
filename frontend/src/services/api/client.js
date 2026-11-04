@@ -1,9 +1,9 @@
 import axios from 'axios'
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 export const api = axios.create({
-  baseURL: `${API_BASE_URL}/api/v1`,
+  baseURL: `${API_BASE_URL.replace(/\/$/, '')}/api/v1`,
   timeout: 15000,
 })
 
@@ -29,7 +29,8 @@ export function apiMessage(error) {
     if (error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT') {
       return 'The API request timed out. Check the backend connection and try again.'
     }
-    return `Could not connect to the API at ${API_BASE_URL}. Check the URL, backend availability, and CORS configuration.`
+    const apiAddress = API_BASE_URL || '/api/v1 (development proxy)'
+    return `Could not connect to the API at ${apiAddress}. Check the backend availability and API URL.`
   }
 
   const { status, data } = error.response

@@ -1,11 +1,10 @@
 import { api } from './client'
 
 export const identityStatus = () => api.get('/identity/status')
-export const uploadDocument = (documentType, file, demoConfirmationComplete, onUploadProgress) => {
+export const uploadDocument = (documentType, file, onUploadProgress) => {
   const form = new FormData()
   form.append('document_type', documentType)
   form.append('file', file)
-  if (demoConfirmationComplete) form.append('demo_confirmation_complete', 'true')
   return api.post('/identity/documents', form, { onUploadProgress, timeout: 60000 })
 }
 export const documentStatus = (id) => api.get(`/identity/documents/${id}`)

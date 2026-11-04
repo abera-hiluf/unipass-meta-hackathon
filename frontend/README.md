@@ -12,6 +12,6 @@ cp .env.example .env
 npm run dev
 ```
 
-Set `VITE_API_BASE_URL` in `.env` when the backend is not at `http://localhost:8000`. Never put Meta, database, JWT, or other backend secrets in frontend environment variables.
+In development, API requests use the Vite proxy to `http://127.0.0.1:8000` by default, avoiding browser CORS and `localhost`/`127.0.0.1` origin mismatches. Set `VITE_API_BASE_URL` in `.env` to an absolute API origin only when using a different backend; direct cross-origin requests require that backend to allow the frontend origin. Never put Meta, database, JWT, or other backend secrets in frontend environment variables.
 
 Build for a production-like check with `npm run build`.
